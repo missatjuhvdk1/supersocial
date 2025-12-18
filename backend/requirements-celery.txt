@@ -1,0 +1,22 @@
+# Celery Worker Requirements for TikTok Auto-Poster
+
+# Core Celery
+celery[redis]==5.3.4
+redis==5.0.1
+
+# Message broker
+kombu==5.3.4
+
+# Database (async support)
+sqlalchemy[asyncio]==2.0.23
+asyncpg==0.29.0  # PostgreSQL async driver
+aiosqlite==0.19.0  # SQLite async driver
+
+# Monitoring (optional)
+flower==2.0.1
+
+# Task scheduling
+python-dateutil==2.8.2
+
+# Logging
+python-json-logger==2.0.7

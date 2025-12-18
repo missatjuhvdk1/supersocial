@@ -1,0 +1,179 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: tiktok-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tiktok}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tiktok_password}
+      POSTGRES_DB: ${POSTGRES_DB:-tiktok_db}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tiktok}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tiktok-network
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: tiktok-redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis_password}
+    volumes:
+      - redis_data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tiktok-network
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    container_name: tiktok-backend
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-tiktok}:${POSTGRES_PASSWORD:-tiktok_password}@postgres:5432/${POSTGRES_DB:-tiktok_db}
+      - REDIS_URL=redis://:{REDIS_PASSWORD:-redis_password}@redis:6379/0
+      - SECRET_KEY=${SECRET_KEY}
+      - SADCAPTCHA_API_KEY=${SADCAPTCHA_API_KEY}
+      - CELERY_BROKER_URL=redis://:{REDIS_PASSWORD:-redis_password}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:{REDIS_PASSWORD:-redis_password}@redis:6379/1
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - MAX_UPLOAD_SIZE=${MAX_UPLOAD_SIZE:-104857600}
+      - TIKTOK_SESSION_STORAGE=/app/sessions
+    volumes:
+      - uploads:/app/uploads
+      - sessions:/app/sessions
+      - ./backend/logs:/app/logs
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - tiktok-network
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    container_name: tiktok-worker
+    command: celery -A app.worker.celery_app worker --loglevel=${LOG_LEVEL:-info} --concurrency=${WORKER_CONCURRENCY:-4}
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-tiktok}:${POSTGRES_PASSWORD:-tiktok_password}@postgres:5432/${POSTGRES_DB:-tiktok_db}
+      - REDIS_URL=redis://:{REDIS_PASSWORD:-redis_password}@redis:6379/0
+      - SECRET_KEY=${SECRET_KEY}
+      - SADCAPTCHA_API_KEY=${SADCAPTCHA_API_KEY}
+      - CELERY_BROKER_URL=redis://:{REDIS_PASSWORD:-redis_password}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:{REDIS_PASSWORD:-redis_password}@redis:6379/1
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - TIKTOK_SESSION_STORAGE=/app/sessions
+    volumes:
+      - uploads:/app/uploads
+      - sessions:/app/sessions
+      - ./backend/logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.worker.celery_app inspect ping -d celery@$$HOSTNAME"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - tiktok-network
+    restart: unless-stopped
+
+  beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    container_name: tiktok-beat
+    command: celery -A app.worker.celery_app beat --loglevel=${LOG_LEVEL:-info}
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-tiktok}:${POSTGRES_PASSWORD:-tiktok_password}@postgres:5432/${POSTGRES_DB:-tiktok_db}
+      - REDIS_URL=redis://:{REDIS_PASSWORD:-redis_password}@redis:6379/0
+      - SECRET_KEY=${SECRET_KEY}
+      - CELERY_BROKER_URL=redis://:{REDIS_PASSWORD:-redis_password}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:{REDIS_PASSWORD:-redis_password}@redis:6379/1
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      - ./backend/logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - tiktok-network
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    container_name: tiktok-frontend
+    environment:
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      - NODE_ENV=production
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - tiktok-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  uploads:
+    driver: local
+  sessions:
+    driver: local
+
+networks:
+  tiktok-network:
+    driver: bridge

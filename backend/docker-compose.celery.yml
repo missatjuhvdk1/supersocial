@@ -1,0 +1,124 @@
+version: '3.8'
+
+services:
+  # Redis - Message broker and result backend
+  redis:
+    image: redis:7-alpine
+    container_name: tiktok-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # Celery Worker - Main worker for all tasks
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tiktok-celery-worker
+    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=4
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=${DATABASE_URL}
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./app:/app/app
+      - ./uploads:/app/uploads
+      - ./temp:/app/temp
+      - celery_logs:/var/log/celery
+    restart: unless-stopped
+
+  # Celery Worker - Dedicated upload queue
+  celery-worker-uploads:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tiktok-celery-worker-uploads
+    command: celery -A app.worker.celery_app worker -Q uploads --loglevel=info --concurrency=2
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=${DATABASE_URL}
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./app:/app/app
+      - ./uploads:/app/uploads
+      - ./temp:/app/temp
+      - celery_logs:/var/log/celery
+    restart: unless-stopped
+
+  # Celery Worker - Dedicated processing queue
+  celery-worker-processing:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tiktok-celery-worker-processing
+    command: celery -A app.worker.celery_app worker -Q processing --loglevel=info --concurrency=2
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=${DATABASE_URL}
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./app:/app/app
+      - ./uploads:/app/uploads
+      - ./temp:/app/temp
+      - celery_logs:/var/log/celery
+    restart: unless-stopped
+
+  # Celery Beat - Periodic task scheduler
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tiktok-celery-beat
+    command: celery -A app.worker.celery_app beat --loglevel=info
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=${DATABASE_URL}
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./app:/app/app
+      - celery_logs:/var/log/celery
+    restart: unless-stopped
+
+  # Flower - Celery monitoring dashboard
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tiktok-flower
+    command: celery -A app.worker.celery_app flower --port=5555
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    ports:
+      - "5555:5555"
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+    driver: local
+  celery_logs:
+    driver: local
