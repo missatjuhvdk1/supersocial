@@ -87,7 +87,7 @@ export default function JobsPage() {
   });
 
   const getStatusBadge = (status: string) => {
-    const variants: Record<string, 'success' | 'warning' | 'info' | 'error'> = {
+    const variants: Record<string, 'success' | 'warning' | 'info' | 'error' | 'default'> = {
       completed: 'success',
       running: 'info',
       pending: 'warning',
