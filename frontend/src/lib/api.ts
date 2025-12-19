@@ -1,7 +1,9 @@
 import axios from 'axios';
 
+// Ensure /api/v1 is always the base path
+const apiBase = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/+$/, '');
 const api = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api',
+  baseURL: `${apiBase}/api/v1`,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -61,7 +63,7 @@ export const proxiesAPI = {
   import: (file: File) => {
     const formData = new FormData();
     formData.append('file', file);
-    return api.post('/proxies/import', formData, {
+    return api.post('/proxies/bulk-import-txt', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },

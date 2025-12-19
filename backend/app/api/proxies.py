@@ -139,6 +139,80 @@ async def bulk_import_proxies(
     return created_proxies
 
 
+@router.post("/bulk-import-txt", response_model=List[ProxyResponse])
+async def bulk_import_proxies_txt(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db)
+) -> List[Proxy]:
+    """Bulk import proxies from TXT file.
+
+    Supported formats (one proxy per line):
+    - host:port
+    - host:port:username:password
+    - ip:port
+    - ip:port:username:password
+    """
+    if not file.filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No file provided"
+        )
+
+    contents = await file.read()
+    lines = contents.decode('utf-8').strip().split('\n')
+
+    created_proxies = []
+    errors = []
+
+    for line_num, line in enumerate(lines, 1):
+        line = line.strip()
+        if not line or line.startswith('#'):  # Skip empty lines and comments
+            continue
+
+        parts = line.split(':')
+
+        try:
+            if len(parts) == 2:
+                # host:port format
+                host, port = parts
+                proxy_data = ProxyCreate(
+                    host=host.strip(),
+                    port=int(port.strip()),
+                    username=None,
+                    password=None,
+                )
+            elif len(parts) == 4:
+                # host:port:username:password format
+                host, port, username, password = parts
+                proxy_data = ProxyCreate(
+                    host=host.strip(),
+                    port=int(port.strip()),
+                    username=username.strip() if username.strip() else None,
+                    password=password.strip() if password.strip() else None,
+                )
+            else:
+                errors.append(f"Line {line_num}: Invalid format '{line}'")
+                continue
+
+            proxy = Proxy(**proxy_data.model_dump())
+            db.add(proxy)
+            created_proxies.append(proxy)
+
+        except ValueError as e:
+            errors.append(f"Line {line_num}: {str(e)}")
+            continue
+        except Exception as e:
+            errors.append(f"Line {line_num}: {str(e)}")
+            continue
+
+    if created_proxies:
+        await db.commit()
+        for proxy in created_proxies:
+            await db.refresh(proxy)
+
+    return created_proxies
+
+
 @router.post("/bulk-import-csv", response_model=List[ProxyResponse])
 async def bulk_import_proxies_csv(
     file: UploadFile = File(...),

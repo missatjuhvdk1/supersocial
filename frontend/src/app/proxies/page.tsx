@@ -10,56 +10,59 @@ import Modal from '@/components/ui/Modal';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/Table';
 import { Upload, Activity, Trash2, RefreshCw } from 'lucide-react';
 
+interface Proxy {
+  id: string;
+  host: string;
+  port: number;
+  type: string;
+  username: string | null;
+  status: string;
+  latency: number | null;
+  lastChecked: string | null;
+}
+
 export default function ProxiesPage() {
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const queryClient = useQueryClient();
 
-  const { data: proxies, isLoading } = useQuery({
+  const { data: proxies, isLoading } = useQuery<Proxy[]>({
     queryKey: ['proxies'],
-    queryFn: async () => {
-      // Placeholder data
-      return [
-        {
-          id: '1',
-          host: '123.45.67.89',
-          port: 8080,
-          type: 'http',
-          username: 'user1',
-          status: 'working',
-          latency: 45,
-          lastChecked: '2024-01-15T10:30:00Z',
-        },
-        {
-          id: '2',
-          host: '123.45.67.90',
-          port: 8080,
-          type: 'socks5',
-          username: 'user2',
-          status: 'working',
-          latency: 62,
-          lastChecked: '2024-01-15T10:28:00Z',
-        },
-        {
-          id: '3',
-          host: '123.45.67.91',
-          port: 8080,
-          type: 'http',
-          username: null,
-          status: 'failed',
-          latency: null,
-          lastChecked: '2024-01-15T09:15:00Z',
-        },
-      ];
+    queryFn: async (): Promise<Proxy[]> => {
+      const response = await proxiesAPI.getAll();
+      // Map backend response to frontend format
+      return response.data.map((proxy: any): Proxy => ({
+        id: String(proxy.id),
+        host: proxy.host,
+        port: proxy.port,
+        type: proxy.type,
+        username: proxy.username,
+        status: proxy.status === 'active' ? 'working' : proxy.status === 'error' ? 'failed' : proxy.status,
+        latency: proxy.latency_ms,
+        lastChecked: proxy.last_checked,
+      }));
     },
   });
 
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importSuccess, setImportSuccess] = useState<string | null>(null);
+
   const importMutation = useMutation({
     mutationFn: (file: File) => proxiesAPI.import(file),
-    onSuccess: () => {
+    onSuccess: (response) => {
       queryClient.invalidateQueries({ queryKey: ['proxies'] });
-      setIsImportModalOpen(false);
+      const count = response.data?.length || 0;
+      setImportSuccess(`Successfully imported ${count} proxies!`);
+      setImportError(null);
       setSelectedFile(null);
+      setTimeout(() => {
+        setIsImportModalOpen(false);
+        setImportSuccess(null);
+      }, 2000);
+    },
+    onError: (error: any) => {
+      setImportError(error.response?.data?.detail || error.message || 'Import failed');
+      setImportSuccess(null);
     },
   });
 
@@ -150,7 +153,7 @@ export default function ProxiesPage() {
                   <TableCell>{getStatusBadge(proxy.status)}</TableCell>
                   <TableCell>{getLatencyBadge(proxy.latency)}</TableCell>
                   <TableCell className="text-muted">
-                    {new Date(proxy.lastChecked).toLocaleString()}
+                    {proxy.lastChecked ? new Date(proxy.lastChecked).toLocaleString() : 'Never'}
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-2">
@@ -180,7 +183,12 @@ export default function ProxiesPage() {
 
       <Modal
         isOpen={isImportModalOpen}
-        onClose={() => setIsImportModalOpen(false)}
+        onClose={() => {
+          setIsImportModalOpen(false);
+          setImportError(null);
+          setImportSuccess(null);
+          setSelectedFile(null);
+        }}
         title="Import Proxies"
         footer={
           <>
@@ -198,23 +206,45 @@ export default function ProxiesPage() {
         }
       >
         <div className="space-y-4">
-          <p className="text-muted text-sm">
-            Upload a text file with proxies in format: host:port:username:password (one per line)
-          </p>
+          <div className="text-muted text-sm space-y-2">
+            <p>Upload a text file with proxies (one per line). Supported formats:</p>
+            <div className="bg-gray-800 rounded p-3 font-mono text-xs space-y-1">
+              <p className="text-green-400"># Without authentication:</p>
+              <p>123.45.67.89:8080</p>
+              <p className="text-green-400 mt-2"># With authentication:</p>
+              <p>123.45.67.89:8080:username:password</p>
+            </div>
+          </div>
+
+          {importError && (
+            <div className="bg-red-500/10 border border-red-500/50 rounded-lg p-3 text-red-400 text-sm">
+              {importError}
+            </div>
+          )}
+
+          {importSuccess && (
+            <div className="bg-green-500/10 border border-green-500/50 rounded-lg p-3 text-green-400 text-sm">
+              {importSuccess}
+            </div>
+          )}
+
           <div className="border-2 border-dashed border-border rounded-lg p-8 text-center">
             <input
               type="file"
-              accept=".txt"
-              onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+              accept=".txt,.csv"
+              onChange={(e) => {
+                setSelectedFile(e.target.files?.[0] || null);
+                setImportError(null);
+              }}
               className="hidden"
               id="file-upload"
             />
             <label htmlFor="file-upload" className="cursor-pointer">
               <Upload size={48} className="mx-auto text-muted mb-4" />
               <p className="text-white font-medium mb-1">
-                {selectedFile ? selectedFile.name : 'Click to upload TXT file'}
+                {selectedFile ? selectedFile.name : 'Click to upload file'}
               </p>
-              <p className="text-muted text-sm">or drag and drop</p>
+              <p className="text-muted text-sm">Accepts .txt files</p>
             </label>
           </div>
         </div>
