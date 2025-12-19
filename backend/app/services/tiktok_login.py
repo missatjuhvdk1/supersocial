@@ -48,6 +48,21 @@ class TikTokLoginService:
         'login_check': '[data-e2e="profile-icon"], a[href*="@"]',
     }
 
+    # Multiple captcha selectors for better detection
+    CAPTCHA_SELECTORS = [
+        'iframe[id*="captcha"]',
+        '.captcha_verify_container',
+        '.secsdk-captcha-drag-icon',  # Slider captcha
+        '#captcha-verify-image',
+        '.captcha-verify-image',
+        '[class*="captcha"]',
+        '[class*="Captcha"]',
+        '.verify-wrap',
+        '#verify-bar-wrap',
+        '.cap_verify',
+        'div[class*="secsdk"]',
+    ]
+
     def __init__(
         self,
         proxy: Optional[Dict[str, str]] = None,
@@ -62,6 +77,7 @@ class TikTokLoginService:
             headless: Run browser in headless mode
             captcha_api_key: API key for captcha solver
         """
+        import os
         self.proxy = proxy
         self.headless = headless
         self.profile = self._default_profile()
@@ -71,7 +87,14 @@ class TikTokLoginService:
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
 
-        self.captcha_solver = SadCaptchaSolver(api_key=captcha_api_key) if captcha_api_key else None
+        # Use provided API key or fall back to environment variable
+        api_key = captcha_api_key or os.getenv('SADCAPTCHA_API_KEY')
+        if api_key:
+            self.captcha_solver = SadCaptchaSolver(api_key=api_key)
+            logger.info(f"Captcha solver initialized with API key: {api_key[:8]}...")
+        else:
+            self.captcha_solver = None
+            logger.warning("No SADCAPTCHA_API_KEY found - captcha solving disabled")
 
         logger.info("TikTokLoginService initialized")
 
@@ -414,6 +437,18 @@ class TikTokLoginService:
         except Exception as e:
             logger.warning(f"Error waiting for login complete: {e}")
 
+    async def _detect_captcha(self) -> bool:
+        """Check if any captcha is present on the page."""
+        for selector in self.CAPTCHA_SELECTORS:
+            try:
+                element = await self.page.query_selector(selector)
+                if element:
+                    logger.info(f"Captcha detected with selector: {selector}")
+                    return True
+            except Exception:
+                continue
+        return False
+
     async def _handle_captcha(self, max_attempts: int = 3) -> bool:
         """
         Detect and solve captcha if present.
@@ -428,10 +463,10 @@ class TikTokLoginService:
             await asyncio.sleep(2)
 
             for attempt in range(max_attempts):
-                # Check for captcha
-                captcha_frame = await self.page.query_selector(self.SELECTORS['captcha_container'])
+                # Check for captcha using multiple selectors
+                captcha_found = await self._detect_captcha()
 
-                if not captcha_frame:
+                if not captcha_found:
                     logger.debug("No captcha detected")
                     return True
 
@@ -453,15 +488,11 @@ class TikTokLoginService:
                     await self._apply_captcha_solution(solution)
 
                     # Wait for captcha to disappear
-                    try:
-                        await self.page.wait_for_selector(
-                            self.SELECTORS['captcha_container'],
-                            state='hidden',
-                            timeout=10000
-                        )
+                    await self._random_delay(2, 3)
+                    if not await self._detect_captcha():
                         logger.info("Captcha solved successfully")
                         return True
-                    except:
+                    else:
                         logger.warning("Captcha still present after solve attempt")
                         await self._random_delay(2, 3)
                         continue
