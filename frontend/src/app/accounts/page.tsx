@@ -35,7 +35,7 @@ export default function AccountsPage() {
       return response.data.map((account: any): Account => ({
         id: String(account.id),
         email: account.email,
-        status: account.status,
+        status: (account.status || '').toLowerCase(),
         proxy: account.proxy_id ? `Proxy #${account.proxy_id}` : null,
         lastUsed: account.last_used,
         createdAt: account.created_at,
@@ -104,8 +104,9 @@ export default function AccountsPage() {
       active: 'success',
       banned: 'error',
       inactive: 'warning',
-      pending: 'warning',
-      warming_up: 'info',
+      pending: 'info',
+      cooldown: 'warning',
+      needs_captcha: 'error',
     };
     return <Badge variant={variants[status] || 'default'}>{status}</Badge>;
   };
@@ -141,8 +142,11 @@ export default function AccountsPage() {
               options={[
                 { value: 'all', label: 'All Statuses' },
                 { value: 'active', label: 'Active' },
+                { value: 'pending', label: 'Pending' },
                 { value: 'inactive', label: 'Inactive' },
                 { value: 'banned', label: 'Banned' },
+                { value: 'cooldown', label: 'Cooldown' },
+                { value: 'needs_captcha', label: 'Needs Captcha' },
               ]}
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
