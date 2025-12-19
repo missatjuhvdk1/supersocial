@@ -9,7 +9,7 @@ import Badge from '@/components/ui/Badge';
 import Modal from '@/components/ui/Modal';
 import Select from '@/components/ui/Select';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/Table';
-import { Upload, MoreVertical, Trash2, RefreshCw } from 'lucide-react';
+import { Upload, MoreVertical, Trash2, RefreshCw, Zap } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 
 interface Account {
@@ -79,6 +79,20 @@ export default function AccountsPage() {
     },
   });
 
+  const warmupMutation = useMutation({
+    mutationFn: (id: string) => accountsAPI.warmup(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['accounts'] });
+    },
+  });
+
+  const warmupAllMutation = useMutation({
+    mutationFn: () => accountsAPI.warmupAll(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['accounts'] });
+    },
+  });
+
   const handleImport = () => {
     if (selectedFile) {
       importMutation.mutate(selectedFile);
@@ -86,11 +100,12 @@ export default function AccountsPage() {
   };
 
   const getStatusBadge = (status: string) => {
-    const variants: Record<string, 'success' | 'error' | 'warning' | 'default'> = {
+    const variants: Record<string, 'success' | 'error' | 'warning' | 'default' | 'info'> = {
       active: 'success',
       banned: 'error',
       inactive: 'warning',
-      pending: 'default',
+      pending: 'warning',
+      warming_up: 'info',
     };
     return <Badge variant={variants[status] || 'default'}>{status}</Badge>;
   };
@@ -102,10 +117,20 @@ export default function AccountsPage() {
           <h1 className="text-3xl font-bold text-white">TikTok Accounts</h1>
           <p className="text-muted mt-2">Manage your TikTok accounts</p>
         </div>
-        <Button onClick={() => setIsImportModalOpen(true)}>
-          <Upload size={16} className="mr-2" />
-          Import Accounts
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="secondary"
+            onClick={() => warmupAllMutation.mutate()}
+            isLoading={warmupAllMutation.isPending}
+          >
+            <Zap size={16} className="mr-2" />
+            Warmup All
+          </Button>
+          <Button onClick={() => setIsImportModalOpen(true)}>
+            <Upload size={16} className="mr-2" />
+            Import Accounts
+          </Button>
+        </div>
       </div>
 
       <Card>
@@ -166,6 +191,16 @@ export default function AccountsPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
+                        {(account.status === 'pending' || account.status === 'inactive') && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => warmupMutation.mutate(account.id)}
+                            isLoading={warmupMutation.isPending}
+                          >
+                            <Zap size={16} />
+                          </Button>
+                        )}
                         <Button
                           variant="ghost"
                           size="sm"

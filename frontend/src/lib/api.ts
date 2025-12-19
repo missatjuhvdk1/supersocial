@@ -53,6 +53,8 @@ export const accountsAPI = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
+  warmup: (id: string) => api.post(`/accounts/${id}/warmup`),
+  warmupAll: () => api.post('/accounts/warmup-all'),
 };
 
 export const proxiesAPI = {

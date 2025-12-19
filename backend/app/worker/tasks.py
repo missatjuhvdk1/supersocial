@@ -662,6 +662,183 @@ async def _check_all_proxies_task_async(task_self) -> Dict[str, Any]:
             raise
 
 
+@celery_app.task(
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_kwargs={'max_retries': 2, 'countdown': 10},
+    name="app.worker.tasks.warmup_account_task"
+)
+def warmup_account_task(self, account_id: int) -> Dict[str, Any]:
+    """
+    Attempt to login to TikTok using the account's email/password.
+    On success: stores cookies in account.cookies field, sets status to ACTIVE.
+    On failure: sets status to INACTIVE, stores error message.
+
+    Args:
+        account_id: The ID of the account to warmup
+
+    Returns:
+        Dictionary with warmup results
+    """
+    return run_async(_warmup_account_task_async(self, account_id))
+
+
+async def _warmup_account_task_async(task_self, account_id: int) -> Dict[str, Any]:
+    """Async implementation of warmup_account_task."""
+    async with async_session_maker() as db:
+        try:
+            logger.info(f"Starting warmup for account {account_id}")
+
+            # Fetch account
+            result = await db.execute(select(Account).where(Account.id == account_id))
+            account = result.scalar_one_or_none()
+
+            if not account:
+                raise ValueError(f"Account {account_id} not found")
+
+            # Get assigned proxy if any
+            proxy = None
+            if account.proxy_id:
+                result = await db.execute(select(Proxy).where(Proxy.id == account.proxy_id))
+                proxy = result.scalar_one_or_none()
+
+            # Initialize TikTok login service
+            from app.services.tiktok_login import TikTokLoginService
+            login_service = TikTokLoginService(
+                proxy=_proxy_to_dict(proxy) if proxy else None,
+                headless=True
+            )
+
+            # Attempt login (use sync wrapper for thread execution)
+            logger.info(f"Attempting login for account {account.email}")
+            login_result = await asyncio.to_thread(
+                login_service.login_sync,
+                account.email,
+                account.password
+            )
+
+            # Update account based on login result
+            if login_result.get("success"):
+                account.cookies = login_result.get("cookies")
+                account.status = AccountStatus.ACTIVE
+                account.last_used = datetime.utcnow()
+                logger.info(f"Account {account.email} warmed up successfully")
+
+                await db.commit()
+
+                return {
+                    "account_id": account_id,
+                    "email": account.email,
+                    "success": True,
+                    "status": account.status.value
+                }
+            else:
+                error_message = login_result.get("error", "Unknown login error")
+                account.status = AccountStatus.INACTIVE
+                logger.error(f"Account {account.email} warmup failed: {error_message}")
+
+                await db.commit()
+
+                return {
+                    "account_id": account_id,
+                    "email": account.email,
+                    "success": False,
+                    "error": error_message,
+                    "status": account.status.value
+                }
+
+        except Exception as e:
+            logger.exception(f"Error warming up account {account_id}: {str(e)}")
+
+            # Mark account as inactive
+            result = await db.execute(select(Account).where(Account.id == account_id))
+            account = result.scalar_one_or_none()
+
+            if account:
+                account.status = AccountStatus.INACTIVE
+                await db.commit()
+
+            raise
+
+
+@celery_app.task(
+    bind=True,
+    name="app.worker.tasks.warmup_all_pending_accounts_task"
+)
+def warmup_all_pending_accounts_task(self) -> Dict[str, Any]:
+    """
+    Find all accounts with status='pending' or without cookies and schedule warmup tasks.
+    Tasks are staggered with delays to avoid detection.
+
+    Returns:
+        Dictionary with scheduled warmup results
+    """
+    return run_async(_warmup_all_pending_accounts_task_async(self))
+
+
+async def _warmup_all_pending_accounts_task_async(task_self) -> Dict[str, Any]:
+    """Async implementation of warmup_all_pending_accounts_task."""
+    async with async_session_maker() as db:
+        try:
+            logger.info("Finding accounts that need warmup")
+
+            # Find accounts with status='pending' or without cookies
+            from sqlalchemy import or_
+            result = await db.execute(
+                select(Account).where(
+                    or_(
+                        Account.status == AccountStatus.PENDING,
+                        Account.cookies.is_(None)
+                    )
+                )
+            )
+            accounts = result.scalars().all()
+
+            if not accounts:
+                logger.info("No accounts need warmup")
+                return {
+                    "accounts_scheduled": 0,
+                    "scheduled_tasks": []
+                }
+
+            # Schedule warmup tasks with staggered delays
+            scheduled_tasks = []
+            base_delay = 30  # Base delay between accounts in seconds
+
+            for idx, account in enumerate(accounts):
+                # Calculate staggered delay (30-60 seconds between each account)
+                delay_seconds = base_delay + (idx * random.uniform(30, 60))
+
+                # Schedule the warmup task
+                result = warmup_account_task.apply_async(
+                    args=[account.id],
+                    countdown=int(delay_seconds)
+                )
+
+                scheduled_tasks.append({
+                    "account_id": account.id,
+                    "email": account.email,
+                    "delay_seconds": delay_seconds,
+                    "task_id": result.id
+                })
+
+                logger.info(
+                    f"Scheduled warmup for account {account.email} "
+                    f"with {delay_seconds:.0f}s delay"
+                )
+
+            logger.info(f"Scheduled warmup for {len(accounts)} accounts")
+
+            return {
+                "accounts_scheduled": len(accounts),
+                "scheduled_tasks": scheduled_tasks
+            }
+
+        except Exception as e:
+            logger.exception(f"Error scheduling warmup tasks: {str(e)}")
+            raise
+
+
 # Helper functions
 
 def _proxy_to_dict(proxy: Proxy) -> Dict[str, Any]:

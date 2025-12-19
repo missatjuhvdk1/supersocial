@@ -19,6 +19,7 @@ class AccountStatus(str, enum.Enum):
     COOLDOWN = "cooldown"
     NEEDS_CAPTCHA = "needs_captcha"
     INACTIVE = "inactive"
+    PENDING = "pending"
 
 
 class Account(Base):

@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import List
+from typing import List, Dict, Any
 import csv
 import io
 
 from app.database import get_db
-from app.models.account import Account
+from app.models.account import Account, AccountStatus
 from app.schemas.account import (
     AccountCreate,
     AccountUpdate,
@@ -15,6 +15,7 @@ from app.schemas.account import (
     AccountTestLogin,
     AccountTestLoginResponse
 )
+from app.worker.tasks import warmup_account_task, warmup_all_pending_accounts_task
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 
@@ -184,7 +185,7 @@ async def bulk_import_accounts_csv(
             account_data = AccountCreate(
                 email=row['email'],
                 password=row['password'],
-                status=row.get('status', 'active'),
+                status=row.get('status', 'inactive'),  # Default to inactive for warmup
                 proxy_id=int(row['proxy_id']) if row.get('proxy_id') else None,
                 profile_id=int(row['profile_id']) if row.get('profile_id') else None,
             )
@@ -211,6 +212,63 @@ async def bulk_import_accounts_csv(
         await db.refresh(account)
 
     return created_accounts
+
+
+@router.post("/{account_id}/warmup")
+async def warmup_account(
+    account_id: int,
+    db: AsyncSession = Depends(get_db)
+) -> Dict[str, Any]:
+    """Trigger warmup for a single account.
+
+    This schedules a warmup task for the specified account.
+    """
+    # Verify account exists
+    result = await db.execute(
+        select(Account).where(Account.id == account_id)
+    )
+    account = result.scalar_one_or_none()
+
+    if not account:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Account with id {account_id} not found"
+        )
+
+    # Schedule warmup task
+    task_result = warmup_account_task.delay(account_id)
+
+    return {
+        "message": "Warmup started",
+        "task_id": task_result.id,
+        "account_id": account_id,
+        "account_email": account.email
+    }
+
+
+@router.post("/warmup-all")
+async def warmup_all_accounts(
+    db: AsyncSession = Depends(get_db)
+) -> Dict[str, Any]:
+    """Trigger warmup for all pending accounts.
+
+    This schedules warmup tasks for all accounts with INACTIVE status.
+    """
+    # Count inactive accounts
+    result = await db.execute(
+        select(Account).where(Account.status == AccountStatus.INACTIVE)
+    )
+    pending_accounts = result.scalars().all()
+    account_count = len(pending_accounts)
+
+    # Schedule warmup task for all pending accounts
+    task_result = warmup_all_pending_accounts_task.delay()
+
+    return {
+        "message": f"Warmup started for {account_count} accounts",
+        "task_id": task_result.id,
+        "account_count": account_count
+    }
 
 
 @router.post("/test-login", response_model=AccountTestLoginResponse)
