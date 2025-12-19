@@ -243,8 +243,27 @@ class TikTokLoginService:
                 logger.warning("Captcha handling failed or timed out")
                 # Continue anyway, might still work
 
+            # Save screenshot after login attempt for debugging
+            try:
+                screenshot_path = f"/app/logs/login_attempt_{email.replace('@', '_at_')}.png"
+                await self.page.screenshot(path=screenshot_path)
+                logger.info(f"Screenshot saved to {screenshot_path}")
+            except Exception as e:
+                logger.warning(f"Could not save screenshot: {e}")
+
             # Wait for navigation/login to complete
             await self._wait_for_login_complete()
+
+            # Save screenshot after waiting
+            try:
+                screenshot_path2 = f"/app/logs/login_result_{email.replace('@', '_at_')}.png"
+                await self.page.screenshot(path=screenshot_path2)
+                logger.info(f"Screenshot saved to {screenshot_path2}")
+            except Exception as e:
+                logger.warning(f"Could not save screenshot: {e}")
+
+            # Log current URL for debugging
+            logger.info(f"Current URL after login attempt: {self.page.url}")
 
             # Verify login success
             logger.info("Verifying login success...")
@@ -253,6 +272,12 @@ class TikTokLoginService:
             if not is_logged_in:
                 # Check for error messages
                 error_msg = await self._get_error_message()
+                # Also get page content for debugging
+                try:
+                    page_title = await self.page.title()
+                    logger.error(f"Login failed. Page title: {page_title}, URL: {self.page.url}")
+                except:
+                    pass
                 raise TikTokLoginError(f"Login failed: {error_msg or 'Could not verify login'}")
 
             # Extract cookies
