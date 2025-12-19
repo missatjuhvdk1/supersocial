@@ -49,7 +49,7 @@ export const accountsAPI = {
   import: (file: File) => {
     const formData = new FormData();
     formData.append('file', file);
-    return api.post('/accounts/import', formData, {
+    return api.post('/accounts/bulk-import-csv', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
@@ -74,6 +74,10 @@ export const campaignsAPI = {
   getAll: () => api.get('/campaigns'),
   getById: (id: string) => api.get(`/campaigns/${id}`),
   create: (data: any) => api.post('/campaigns', data),
+  createWithVideo: (formData: FormData) =>
+    api.post('/campaigns/create-with-video', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
   update: (id: string, data: any) => api.put(`/campaigns/${id}`, data),
   delete: (id: string) => api.delete(`/campaigns/${id}`),
   start: (id: string) => api.post(`/campaigns/${id}/start`),
@@ -81,7 +85,12 @@ export const campaignsAPI = {
 };
 
 export const jobsAPI = {
-  getAll: () => api.get('/jobs'),
+  getAll: (params?: { status?: string }) => {
+    const queryParams = params?.status && params.status !== 'all'
+      ? { status: params.status }
+      : undefined;
+    return api.get('/jobs', { params: queryParams });
+  },
   getById: (id: string) => api.get(`/jobs/${id}`),
   cancel: (id: string) => api.post(`/jobs/${id}/cancel`),
   retry: (id: string) => api.post(`/jobs/${id}/retry`),

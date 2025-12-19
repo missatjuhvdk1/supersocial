@@ -10,49 +10,58 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { Plus, Play, Pause, Trash2 } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 
+interface Campaign {
+  id: string;
+  name: string;
+  status: string;
+  videoPath: string;
+  captionTemplate: string;
+  accountSelection: {
+    strategy: string;
+    filters: any;
+    maxAccounts: number;
+  };
+  schedule: {
+    startTime: string;
+    endTime: string;
+    intervalMinutes: number;
+  };
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
 export default function CampaignsPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
 
-  const { data: campaigns, isLoading } = useQuery({
+  const { data: campaigns, isLoading } = useQuery<Campaign[]>({
     queryKey: ['campaigns'],
-    queryFn: async () => {
-      // Placeholder data
-      return [
-        {
-          id: '1',
-          name: 'Morning Posts',
-          status: 'active',
-          videosCount: 10,
-          accountsCount: 5,
-          completedJobs: 45,
-          totalJobs: 50,
-          schedule: '08:00 - 12:00',
-          createdAt: '2024-01-10T08:00:00Z',
+    queryFn: async (): Promise<Campaign[]> => {
+      const response = await campaignsAPI.getAll();
+      // Map backend response to frontend format
+      return response.data.map((campaign: any): Campaign => ({
+        id: String(campaign.id),
+        name: campaign.name,
+        status: campaign.status,
+        videoPath: campaign.video_path,
+        captionTemplate: campaign.caption_template,
+        accountSelection: {
+          strategy: campaign.account_selection.strategy,
+          filters: campaign.account_selection.filters,
+          maxAccounts: campaign.account_selection.max_accounts,
         },
-        {
-          id: '2',
-          name: 'Evening Content',
-          status: 'paused',
-          videosCount: 8,
-          accountsCount: 3,
-          completedJobs: 20,
-          totalJobs: 24,
-          schedule: '18:00 - 22:00',
-          createdAt: '2024-01-12T18:00:00Z',
+        schedule: {
+          startTime: campaign.schedule.start_time,
+          endTime: campaign.schedule.end_time,
+          intervalMinutes: campaign.schedule.interval_minutes,
         },
-        {
-          id: '3',
-          name: 'Weekend Special',
-          status: 'completed',
-          videosCount: 5,
-          accountsCount: 10,
-          completedJobs: 50,
-          totalJobs: 50,
-          schedule: 'All day',
-          createdAt: '2024-01-08T00:00:00Z',
-        },
-      ];
+        createdAt: campaign.created_at,
+        updatedAt: campaign.updated_at,
+        startedAt: campaign.started_at,
+        completedAt: campaign.completed_at,
+      }));
     },
   });
 
@@ -78,10 +87,12 @@ export default function CampaignsPage() {
   });
 
   const getStatusBadge = (status: string) => {
-    const variants: Record<string, 'success' | 'warning' | 'default'> = {
-      active: 'success',
+    const variants: Record<string, 'success' | 'warning' | 'default' | 'error'> = {
+      draft: 'default',
+      running: 'success',
       paused: 'warning',
       completed: 'default',
+      cancelled: 'error',
     };
     return <Badge variant={variants[status] || 'default'}>{status}</Badge>;
   };
@@ -109,9 +120,7 @@ export default function CampaignsPage() {
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead>Videos</TableHead>
-                <TableHead>Accounts</TableHead>
-                <TableHead>Progress</TableHead>
+                <TableHead>Max Accounts</TableHead>
                 <TableHead>Schedule</TableHead>
                 <TableHead>Created</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
@@ -122,30 +131,19 @@ export default function CampaignsPage() {
                 <TableRow key={campaign.id}>
                   <TableCell className="font-medium">{campaign.name}</TableCell>
                   <TableCell>{getStatusBadge(campaign.status)}</TableCell>
-                  <TableCell>{campaign.videosCount}</TableCell>
-                  <TableCell>{campaign.accountsCount}</TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 bg-background rounded-full h-2 overflow-hidden">
-                        <div
-                          className="bg-primary-500 h-full"
-                          style={{
-                            width: `${(campaign.completedJobs / campaign.totalJobs) * 100}%`,
-                          }}
-                        />
-                      </div>
-                      <span className="text-sm text-muted">
-                        {campaign.completedJobs}/{campaign.totalJobs}
-                      </span>
-                    </div>
+                  <TableCell>{campaign.accountSelection.maxAccounts}</TableCell>
+                  <TableCell className="text-muted">
+                    {campaign.schedule.startTime} - {campaign.schedule.endTime}
+                    <span className="text-xs ml-2">
+                      (every {campaign.schedule.intervalMinutes}m)
+                    </span>
                   </TableCell>
-                  <TableCell className="text-muted">{campaign.schedule}</TableCell>
                   <TableCell className="text-muted">
                     {formatDate(campaign.createdAt)}
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-2">
-                      {campaign.status === 'active' ? (
+                      {campaign.status === 'running' ? (
                         <Button
                           variant="ghost"
                           size="sm"
@@ -158,6 +156,7 @@ export default function CampaignsPage() {
                           variant="ghost"
                           size="sm"
                           onClick={() => startMutation.mutate(campaign.id)}
+                          disabled={campaign.status === 'completed' || campaign.status === 'cancelled'}
                         >
                           <Play size={16} />
                         </Button>

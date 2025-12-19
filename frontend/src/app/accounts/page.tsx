@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { accountsAPI } from '@/lib/api';
 import Card, { CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -12,63 +12,63 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { Upload, MoreVertical, Trash2, RefreshCw } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 
+interface Account {
+  id: string;
+  email: string;
+  status: string;
+  proxy: string | null;
+  lastUsed: string | null;
+  createdAt: string;
+}
+
 export default function AccountsPage() {
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState('all');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const queryClient = useQueryClient();
 
-  const { data: accounts, isLoading } = useQuery({
-    queryKey: ['accounts', statusFilter],
-    queryFn: async () => {
-      // Placeholder data - replace with actual API call
-      return [
-        {
-          id: '1',
-          email: 'user1@tiktok.com',
-          username: '@user1',
-          status: 'active',
-          proxy: '123.45.67.89:8080',
-          lastUsed: '2024-01-15T10:30:00Z',
-          postsCount: 45,
-        },
-        {
-          id: '2',
-          email: 'user2@tiktok.com',
-          username: '@user2',
-          status: 'active',
-          proxy: '123.45.67.90:8080',
-          lastUsed: '2024-01-15T09:15:00Z',
-          postsCount: 32,
-        },
-        {
-          id: '3',
-          email: 'user3@tiktok.com',
-          username: '@user3',
-          status: 'banned',
-          proxy: '123.45.67.91:8080',
-          lastUsed: '2024-01-14T18:20:00Z',
-          postsCount: 12,
-        },
-        {
-          id: '4',
-          email: 'user4@tiktok.com',
-          username: '@user4',
-          status: 'inactive',
-          proxy: null,
-          lastUsed: null,
-          postsCount: 0,
-        },
-      ];
+  const { data: accountsData, isLoading } = useQuery<Account[]>({
+    queryKey: ['accounts'],
+    queryFn: async (): Promise<Account[]> => {
+      const response = await accountsAPI.getAll();
+      // Map backend response to frontend format
+      return response.data.map((account: any): Account => ({
+        id: String(account.id),
+        email: account.email,
+        status: account.status,
+        proxy: account.proxy_id ? `Proxy #${account.proxy_id}` : null,
+        lastUsed: account.last_used,
+        createdAt: account.created_at,
+      }));
     },
   });
 
+  // Client-side filtering by status
+  const accounts = useMemo(() => {
+    if (!accountsData) return [];
+    if (statusFilter === 'all') return accountsData;
+    return accountsData.filter(account => account.status === statusFilter);
+  }, [accountsData, statusFilter]);
+
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importSuccess, setImportSuccess] = useState<string | null>(null);
+
   const importMutation = useMutation({
     mutationFn: (file: File) => accountsAPI.import(file),
-    onSuccess: () => {
+    onSuccess: (response) => {
       queryClient.invalidateQueries({ queryKey: ['accounts'] });
-      setIsImportModalOpen(false);
+      const count = response.data?.length || 0;
+      setImportSuccess(`Successfully imported ${count} accounts!`);
+      setImportError(null);
       setSelectedFile(null);
+      setTimeout(() => {
+        setIsImportModalOpen(false);
+        setImportSuccess(null);
+      }, 2000);
+    },
+    onError: (error: any) => {
+      setImportError(error.response?.data?.detail || error.message || 'Import failed');
+      setImportSuccess(null);
     },
   });
 
@@ -130,43 +130,55 @@ export default function AccountsPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Email</TableHead>
-                <TableHead>Username</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Proxy</TableHead>
-                <TableHead>Posts</TableHead>
                 <TableHead>Last Used</TableHead>
+                <TableHead>Created At</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {accounts?.map((account) => (
-                <TableRow key={account.id}>
-                  <TableCell className="font-medium">{account.email}</TableCell>
-                  <TableCell>{account.username}</TableCell>
-                  <TableCell>{getStatusBadge(account.status)}</TableCell>
-                  <TableCell className="text-muted">
-                    {account.proxy || 'Not assigned'}
-                  </TableCell>
-                  <TableCell>{account.postsCount}</TableCell>
-                  <TableCell className="text-muted">
-                    {account.lastUsed ? formatDate(account.lastUsed) : 'Never'}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      <Button variant="ghost" size="sm">
-                        <RefreshCw size={16} />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => deleteMutation.mutate(account.id)}
-                      >
-                        <Trash2 size={16} />
-                      </Button>
-                    </div>
+              {isLoading ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center text-muted py-8">
+                    Loading accounts...
                   </TableCell>
                 </TableRow>
-              ))}
+              ) : accounts?.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center text-muted py-8">
+                    No accounts found. Import some accounts to get started.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                accounts?.map((account) => (
+                  <TableRow key={account.id}>
+                    <TableCell className="font-medium">{account.email}</TableCell>
+                    <TableCell>{getStatusBadge(account.status)}</TableCell>
+                    <TableCell className="text-muted">
+                      {account.proxy || 'Not assigned'}
+                    </TableCell>
+                    <TableCell className="text-muted">
+                      {account.lastUsed ? formatDate(account.lastUsed) : 'Never'}
+                    </TableCell>
+                    <TableCell className="text-muted">
+                      {formatDate(account.createdAt)}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => deleteMutation.mutate(account.id)}
+                          isLoading={deleteMutation.isPending}
+                        >
+                          <Trash2 size={16} />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         </CardContent>
@@ -174,7 +186,12 @@ export default function AccountsPage() {
 
       <Modal
         isOpen={isImportModalOpen}
-        onClose={() => setIsImportModalOpen(false)}
+        onClose={() => {
+          setIsImportModalOpen(false);
+          setImportError(null);
+          setImportSuccess(null);
+          setSelectedFile(null);
+        }}
         title="Import Accounts"
         footer={
           <>
@@ -192,14 +209,36 @@ export default function AccountsPage() {
         }
       >
         <div className="space-y-4">
-          <p className="text-muted text-sm">
-            Upload a CSV file with columns: email, password, username (optional)
-          </p>
+          <div className="text-muted text-sm space-y-2">
+            <p>Upload a CSV file with columns: email, password, status (optional), proxy_id (optional), profile_id (optional)</p>
+            <div className="bg-gray-800 rounded p-3 font-mono text-xs space-y-1">
+              <p className="text-green-400"># CSV Example:</p>
+              <p>email,password,status,proxy_id,profile_id</p>
+              <p>user1@example.com,password123,active,1,</p>
+              <p>user2@example.com,password456,active,,</p>
+            </div>
+          </div>
+
+          {importError && (
+            <div className="bg-red-500/10 border border-red-500/50 rounded-lg p-3 text-red-400 text-sm">
+              {importError}
+            </div>
+          )}
+
+          {importSuccess && (
+            <div className="bg-green-500/10 border border-green-500/50 rounded-lg p-3 text-green-400 text-sm">
+              {importSuccess}
+            </div>
+          )}
+
           <div className="border-2 border-dashed border-border rounded-lg p-8 text-center">
             <input
               type="file"
               accept=".csv"
-              onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+              onChange={(e) => {
+                setSelectedFile(e.target.files?.[0] || null);
+                setImportError(null);
+              }}
               className="hidden"
               id="file-upload"
             />
@@ -208,7 +247,7 @@ export default function AccountsPage() {
               <p className="text-white font-medium mb-1">
                 {selectedFile ? selectedFile.name : 'Click to upload CSV file'}
               </p>
-              <p className="text-muted text-sm">or drag and drop</p>
+              <p className="text-muted text-sm">Accepts .csv files</p>
             </label>
           </div>
         </div>

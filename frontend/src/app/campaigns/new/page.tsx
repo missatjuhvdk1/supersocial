@@ -11,6 +11,14 @@ import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
 import { Upload, X, Video } from 'lucide-react';
 
+interface Account {
+  id: number;
+  email: string;
+  status: string;
+  proxy_id: number | null;
+  profile_id: number | null;
+}
+
 export default function NewCampaignPage() {
   const router = useRouter();
   const [formData, setFormData] = useState({
@@ -18,7 +26,7 @@ export default function NewCampaignPage() {
     caption: '',
     accountSelection: 'all',
     randomCount: '5',
-    selectedAccounts: [] as string[],
+    selectedAccounts: [] as number[],
     scheduleStart: '08:00',
     scheduleEnd: '20:00',
     delayMin: '60',
@@ -26,15 +34,11 @@ export default function NewCampaignPage() {
   });
   const [videos, setVideos] = useState<File[]>([]);
 
-  const { data: accounts } = useQuery({
+  const { data: accounts } = useQuery<Account[]>({
     queryKey: ['accounts'],
     queryFn: async () => {
-      // Placeholder - use actual API
-      return Array.from({ length: 10 }, (_, i) => ({
-        id: `${i + 1}`,
-        email: `user${i + 1}@tiktok.com`,
-        username: `@user${i + 1}`,
-      }));
+      const response = await accountsAPI.getAll();
+      return response.data;
     },
   });
 
@@ -46,7 +50,7 @@ export default function NewCampaignPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (data: any) => campaignsAPI.create(data),
+    mutationFn: (formData: FormData) => campaignsAPI.createWithVideo(formData),
     onSuccess: () => {
       router.push('/campaigns');
     },
@@ -58,21 +62,20 @@ export default function NewCampaignPage() {
     const campaignData = new FormData();
     campaignData.append('name', formData.name);
     campaignData.append('caption', formData.caption);
-    campaignData.append('accountSelection', formData.accountSelection);
-    campaignData.append('scheduleStart', formData.scheduleStart);
-    campaignData.append('scheduleEnd', formData.scheduleEnd);
-    campaignData.append('delayMin', formData.delayMin);
-    campaignData.append('delayMax', formData.delayMax);
+    campaignData.append('account_selection', formData.accountSelection);
+    campaignData.append('schedule_start', formData.scheduleStart);
+    campaignData.append('schedule_end', formData.scheduleEnd);
+    campaignData.append('delay_min', formData.delayMin);
+    campaignData.append('delay_max', formData.delayMax);
 
     if (formData.accountSelection === 'random') {
-      campaignData.append('randomCount', formData.randomCount);
-    } else if (formData.accountSelection === 'specific') {
-      campaignData.append('selectedAccounts', JSON.stringify(formData.selectedAccounts));
+      campaignData.append('random_count', formData.randomCount);
     }
 
-    videos.forEach((video) => {
-      campaignData.append('videos', video);
-    });
+    // Add the first video (backend expects single video field)
+    if (videos.length > 0) {
+      campaignData.append('video', videos[0]);
+    }
 
     createMutation.mutate(campaignData);
   };
@@ -209,7 +212,9 @@ export default function NewCampaignPage() {
                         }}
                         className="w-4 h-4 text-primary-600 bg-background border-border rounded focus:ring-primary-500"
                       />
-                      <span className="text-white text-sm">{account.email}</span>
+                      <span className="text-white text-sm">
+                        {account.email} ({account.status})
+                      </span>
                     </label>
                   ))}
                 </div>

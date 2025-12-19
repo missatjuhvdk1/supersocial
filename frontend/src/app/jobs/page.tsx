@@ -11,64 +11,44 @@ import { RefreshCw, XCircle, Eye } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 import { useState } from 'react';
 
+interface Job {
+  id: string;
+  campaignId: number;
+  accountId: number;
+  videoPath: string;
+  caption: string;
+  status: string;
+  errorMessage: string | null;
+  retryCount: number;
+  maxRetries: number;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
 export default function JobsPage() {
   const [statusFilter, setStatusFilter] = useState('all');
   const queryClient = useQueryClient();
 
-  const { data: jobs, isLoading } = useQuery({
+  const { data: jobs, isLoading } = useQuery<Job[]>({
     queryKey: ['jobs', statusFilter],
-    queryFn: async () => {
-      // Placeholder data
-      return [
-        {
-          id: '1',
-          campaignName: 'Morning Posts',
-          accountEmail: 'user1@tiktok.com',
-          videoName: 'video1.mp4',
-          status: 'completed',
-          progress: 100,
-          scheduledFor: '2024-01-15T09:00:00Z',
-          startedAt: '2024-01-15T09:00:05Z',
-          completedAt: '2024-01-15T09:02:30Z',
-          error: null,
-        },
-        {
-          id: '2',
-          campaignName: 'Evening Content',
-          accountEmail: 'user2@tiktok.com',
-          videoName: 'video2.mp4',
-          status: 'running',
-          progress: 65,
-          scheduledFor: '2024-01-15T18:00:00Z',
-          startedAt: '2024-01-15T18:00:10Z',
-          completedAt: null,
-          error: null,
-        },
-        {
-          id: '3',
-          campaignName: 'Morning Posts',
-          accountEmail: 'user3@tiktok.com',
-          videoName: 'video3.mp4',
-          status: 'pending',
-          progress: 0,
-          scheduledFor: '2024-01-15T10:30:00Z',
-          startedAt: null,
-          completedAt: null,
-          error: null,
-        },
-        {
-          id: '4',
-          campaignName: 'Weekend Special',
-          accountEmail: 'user4@tiktok.com',
-          videoName: 'video4.mp4',
-          status: 'failed',
-          progress: 45,
-          scheduledFor: '2024-01-15T12:00:00Z',
-          startedAt: '2024-01-15T12:00:08Z',
-          completedAt: null,
-          error: 'Account rate limited',
-        },
-      ];
+    queryFn: async (): Promise<Job[]> => {
+      const response = await jobsAPI.getAll({ status: statusFilter });
+      // Map backend response to frontend format
+      return response.data.map((job: any): Job => ({
+        id: String(job.id),
+        campaignId: job.campaign_id,
+        accountId: job.account_id,
+        videoPath: job.video_path,
+        caption: job.caption,
+        status: job.status,
+        errorMessage: job.error_message,
+        retryCount: job.retry_count,
+        maxRetries: job.max_retries,
+        createdAt: job.created_at,
+        startedAt: job.started_at,
+        completedAt: job.completed_at,
+      }));
     },
   });
 
@@ -117,6 +97,7 @@ export default function JobsPage() {
                 { value: 'running', label: 'Running' },
                 { value: 'completed', label: 'Completed' },
                 { value: 'failed', label: 'Failed' },
+                { value: 'cancelled', label: 'Cancelled' },
               ]}
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
@@ -128,12 +109,12 @@ export default function JobsPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Campaign</TableHead>
-                <TableHead>Account</TableHead>
-                <TableHead>Video</TableHead>
+                <TableHead>Campaign ID</TableHead>
+                <TableHead>Account ID</TableHead>
+                <TableHead>Video/Caption</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead>Progress</TableHead>
-                <TableHead>Scheduled For</TableHead>
+                <TableHead>Retries</TableHead>
+                <TableHead>Created At</TableHead>
                 <TableHead>Started At</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
@@ -141,30 +122,33 @@ export default function JobsPage() {
             <TableBody>
               {jobs?.map((job) => (
                 <TableRow key={job.id}>
-                  <TableCell className="font-medium">{job.campaignName}</TableCell>
-                  <TableCell className="text-muted">{job.accountEmail}</TableCell>
-                  <TableCell className="text-muted">{job.videoName}</TableCell>
+                  <TableCell className="font-medium">#{job.campaignId}</TableCell>
+                  <TableCell className="text-muted">#{job.accountId}</TableCell>
                   <TableCell>
                     <div className="flex flex-col gap-1">
-                      {getStatusBadge(job.status)}
-                      {job.error && (
-                        <span className="text-xs text-error">{job.error}</span>
+                      <span className="text-muted text-sm font-mono truncate max-w-xs" title={job.videoPath}>
+                        {job.videoPath.split('/').pop() || job.videoPath}
+                      </span>
+                      {job.caption && (
+                        <span className="text-xs text-muted truncate max-w-xs" title={job.caption}>
+                          {job.caption}
+                        </span>
                       )}
                     </div>
                   </TableCell>
                   <TableCell>
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 bg-background rounded-full h-2 overflow-hidden w-20">
-                        <div
-                          className="bg-primary-500 h-full transition-all"
-                          style={{ width: `${job.progress}%` }}
-                        />
-                      </div>
-                      <span className="text-sm text-muted">{job.progress}%</span>
+                    <div className="flex flex-col gap-1">
+                      {getStatusBadge(job.status)}
+                      {job.errorMessage && (
+                        <span className="text-xs text-error">{job.errorMessage}</span>
+                      )}
                     </div>
                   </TableCell>
                   <TableCell className="text-muted">
-                    {formatDate(job.scheduledFor)}
+                    {job.retryCount}/{job.maxRetries}
+                  </TableCell>
+                  <TableCell className="text-muted">
+                    {formatDate(job.createdAt)}
                   </TableCell>
                   <TableCell className="text-muted">
                     {job.startedAt ? formatDate(job.startedAt) : '-'}
