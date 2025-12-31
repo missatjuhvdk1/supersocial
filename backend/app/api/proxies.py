@@ -149,9 +149,12 @@ async def bulk_import_proxies_txt(
     Supported formats (one proxy per line):
     - host:port
     - host:port:username:password
-    - ip:port
-    - ip:port:username:password
+    - http://host:port
+    - http://username:password@host:port
+    - socks5://host:port
     """
+    import re
+
     if not file.filename:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -169,30 +172,52 @@ async def bulk_import_proxies_txt(
         if not line or line.startswith('#'):  # Skip empty lines and comments
             continue
 
-        parts = line.split(':')
-
         try:
-            if len(parts) == 2:
-                # host:port format
-                host, port = parts
-                proxy_data = ProxyCreate(
-                    host=host.strip(),
-                    port=int(port.strip()),
-                    username=None,
-                    password=None,
+            host = None
+            port = None
+            username = None
+            password = None
+            proxy_type = "http"
+
+            # Check if it's a URL format (http://, https://, socks5://, etc.)
+            if '://' in line:
+                # Parse URL format: protocol://[username:password@]host:port
+                url_match = re.match(
+                    r'^(https?|socks[45]?)://(?:([^:]+):([^@]+)@)?([^:]+):(\d+)/?$',
+                    line
                 )
-            elif len(parts) == 4:
-                # host:port:username:password format
-                host, port, username, password = parts
-                proxy_data = ProxyCreate(
-                    host=host.strip(),
-                    port=int(port.strip()),
-                    username=username.strip() if username.strip() else None,
-                    password=password.strip() if password.strip() else None,
-                )
+                if url_match:
+                    proxy_type = url_match.group(1)
+                    username = url_match.group(2)
+                    password = url_match.group(3)
+                    host = url_match.group(4)
+                    port = int(url_match.group(5))
+                else:
+                    errors.append(f"Line {line_num}: Invalid URL format '{line}'")
+                    continue
             else:
-                errors.append(f"Line {line_num}: Invalid format '{line}'")
-                continue
+                # Traditional format: host:port or host:port:username:password
+                parts = line.split(':')
+
+                if len(parts) == 2:
+                    # host:port format
+                    host, port = parts[0].strip(), int(parts[1].strip())
+                elif len(parts) == 4:
+                    # host:port:username:password format
+                    host = parts[0].strip()
+                    port = int(parts[1].strip())
+                    username = parts[2].strip() if parts[2].strip() else None
+                    password = parts[3].strip() if parts[3].strip() else None
+                else:
+                    errors.append(f"Line {line_num}: Invalid format '{line}'")
+                    continue
+
+            proxy_data = ProxyCreate(
+                host=host,
+                port=port,
+                username=username,
+                password=password,
+            )
 
             proxy = Proxy(**proxy_data.model_dump())
             db.add(proxy)
