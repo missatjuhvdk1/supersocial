@@ -52,6 +52,8 @@ export default function AccountsPage() {
 
   const [importError, setImportError] = useState<string | null>(null);
   const [importSuccess, setImportSuccess] = useState<string | null>(null);
+  const [warmupError, setWarmupError] = useState<string | null>(null);
+  const [warmupSuccess, setWarmupSuccess] = useState<string | null>(null);
 
   const importMutation = useMutation({
     mutationFn: (file: File) => accountsAPI.import(file),
@@ -81,15 +83,33 @@ export default function AccountsPage() {
 
   const warmupMutation = useMutation({
     mutationFn: (id: string) => accountsAPI.warmup(id),
-    onSuccess: () => {
+    onSuccess: (response) => {
       queryClient.invalidateQueries({ queryKey: ['accounts'] });
+      setWarmupSuccess(response.data?.message || 'Warmup started');
+      setWarmupError(null);
+      setTimeout(() => setWarmupSuccess(null), 5000);
+    },
+    onError: (error: any) => {
+      queryClient.invalidateQueries({ queryKey: ['accounts'] });
+      setWarmupError(error.response?.data?.detail || error.message || 'Warmup failed');
+      setWarmupSuccess(null);
+      setTimeout(() => setWarmupError(null), 10000);
     },
   });
 
   const warmupAllMutation = useMutation({
     mutationFn: () => accountsAPI.warmupAll(),
-    onSuccess: () => {
+    onSuccess: (response) => {
       queryClient.invalidateQueries({ queryKey: ['accounts'] });
+      setWarmupSuccess(response.data?.message || 'Warmup started for all accounts');
+      setWarmupError(null);
+      setTimeout(() => setWarmupSuccess(null), 5000);
+    },
+    onError: (error: any) => {
+      queryClient.invalidateQueries({ queryKey: ['accounts'] });
+      setWarmupError(error.response?.data?.detail || error.message || 'Warmup failed');
+      setWarmupSuccess(null);
+      setTimeout(() => setWarmupError(null), 10000);
     },
   });
 
@@ -133,6 +153,18 @@ export default function AccountsPage() {
           </Button>
         </div>
       </div>
+
+      {/* Warmup feedback alerts */}
+      {warmupError && (
+        <div className="mb-4 bg-red-500/10 border border-red-500/50 rounded-lg p-4 text-red-400">
+          <strong>Warmup Error:</strong> {warmupError}
+        </div>
+      )}
+      {warmupSuccess && (
+        <div className="mb-4 bg-green-500/10 border border-green-500/50 rounded-lg p-4 text-green-400">
+          {warmupSuccess}
+        </div>
+      )}
 
       <Card>
         <CardHeader>

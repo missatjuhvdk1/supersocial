@@ -221,7 +221,8 @@ async def warmup_account(
 ) -> Dict[str, Any]:
     """Trigger warmup for a single account.
 
-    This schedules a warmup task for the specified account.
+    Validates account has password, sets status to PENDING for immediate feedback,
+    then schedules the warmup task.
     """
     # Verify account exists
     result = await db.execute(
@@ -235,14 +236,45 @@ async def warmup_account(
             detail=f"Account with id {account_id} not found"
         )
 
+    # Validate account has password
+    if not account.password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Account {account.email} has no password. Import accounts with email AND password."
+        )
+
+    # Check if already warming up
+    if account.status == AccountStatus.PENDING:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Account {account.email} is already warming up"
+        )
+
+    # Set status to PENDING immediately for user feedback
+    previous_status = account.status
+    account.status = AccountStatus.PENDING
+    await db.commit()
+    await db.refresh(account)
+
     # Schedule warmup task
-    task_result = warmup_account_task.delay(account_id)
+    try:
+        task_result = warmup_account_task.delay(account_id)
+        task_id = task_result.id
+    except Exception as e:
+        # If Celery is down, revert status and report error
+        account.status = previous_status
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Task queue unavailable. Is the Celery worker running? Error: {str(e)}"
+        )
 
     return {
-        "message": "Warmup started",
-        "task_id": task_result.id,
+        "message": f"Warmup started for {account.email}",
+        "task_id": task_id,
         "account_id": account_id,
-        "account_email": account.email
+        "account_email": account.email,
+        "status": "pending"
     }
 
 
@@ -250,23 +282,49 @@ async def warmup_account(
 async def warmup_all_accounts(
     db: AsyncSession = Depends(get_db)
 ) -> Dict[str, Any]:
-    """Trigger warmup for all pending accounts.
+    """Trigger warmup for all inactive accounts that have passwords.
 
-    This schedules warmup tasks for all accounts with INACTIVE status.
+    Sets all eligible accounts to PENDING status, then schedules warmup tasks.
     """
-    # Count inactive accounts
+    # Find inactive accounts with passwords
     result = await db.execute(
-        select(Account).where(Account.status == AccountStatus.INACTIVE)
+        select(Account).where(
+            Account.status == AccountStatus.INACTIVE,
+            Account.password.isnot(None),
+            Account.password != ""
+        )
     )
-    pending_accounts = result.scalars().all()
-    account_count = len(pending_accounts)
+    eligible_accounts = result.scalars().all()
+    account_count = len(eligible_accounts)
+
+    if account_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No eligible accounts found. Accounts must be INACTIVE and have a password."
+        )
+
+    # Set all eligible accounts to PENDING
+    for account in eligible_accounts:
+        account.status = AccountStatus.PENDING
+    await db.commit()
 
     # Schedule warmup task for all pending accounts
-    task_result = warmup_all_pending_accounts_task.delay()
+    try:
+        task_result = warmup_all_pending_accounts_task.delay()
+        task_id = task_result.id
+    except Exception as e:
+        # Revert status on failure
+        for account in eligible_accounts:
+            account.status = AccountStatus.INACTIVE
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Task queue unavailable. Is the Celery worker running? Error: {str(e)}"
+        )
 
     return {
         "message": f"Warmup started for {account_count} accounts",
-        "task_id": task_result.id,
+        "task_id": task_id,
         "account_count": account_count
     }
 
