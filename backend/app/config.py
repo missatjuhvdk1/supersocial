@@ -37,11 +37,11 @@ class Settings(BaseSettings):
 
     # TikTok Settings
     tiktok_upload_timeout: int = 300  # seconds
-    tiktok_headless: bool = True
+    tiktok_headless: bool = False  # Set to False to see browser for debugging
     max_concurrent_uploads: int = 5
 
     # Browser Settings
-    headless_browser: bool = True
+    headless_browser: bool = False  # Set to False to see browser for debugging
     browser_timeout: int = 60
 
     # External APIs

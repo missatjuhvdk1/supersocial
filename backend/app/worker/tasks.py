@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.worker.celery_app import celery_app
 from app.database import async_session_maker
+from app.config import settings
 from app.models.job import Job, JobStatus
 from app.models.campaign import Campaign, CampaignStatus
 from app.models.account import Account, AccountStatus
@@ -128,7 +129,7 @@ async def _upload_video_task_async(task_self, job_id: int) -> Dict[str, Any]:
             uploader = TikTokUploader(
                 cookies=account.cookies,
                 proxy=_proxy_to_dict(proxy) if proxy else None,
-                headless=True
+                headless=settings.tiktok_headless
             )
 
             # Prepare upload parameters from job and campaign
@@ -368,7 +369,7 @@ async def _test_account_task_async(task_self, account_id: int) -> Dict[str, Any]
             from app.services.tiktok_uploader import TikTokUploader
             uploader = TikTokUploader(
                 cookies=account.cookies,
-                headless=True
+                headless=settings.tiktok_headless
             )
 
             # Test authentication
@@ -709,7 +710,7 @@ async def _warmup_account_task_async(task_self, account_id: int) -> Dict[str, An
             from app.services.tiktok_login import TikTokLoginService
             login_service = TikTokLoginService(
                 proxy=_proxy_to_dict(proxy) if proxy else None,
-                headless=True
+                headless=settings.tiktok_headless
             )
 
             # Attempt login (use sync wrapper for thread execution)
