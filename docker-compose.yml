@@ -204,6 +204,7 @@ services:
       retries: 3
       start_period: 30s
     networks:
+      - frontend-network    # Added: Required for external internet access (TikTok)
       - backend-network
       - database-network
       - cache-network
