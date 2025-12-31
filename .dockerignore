@@ -1,3 +1,13 @@
+# ===========================================
+# Root .dockerignore
+# Prevents unnecessary files from being sent to Docker daemon
+# ===========================================
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
 # Python
 __pycache__/
 *.py[cod]
@@ -20,7 +30,6 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST
-*.log
 
 # Virtual environments
 venv/
@@ -30,22 +39,38 @@ env.bak/
 venv.bak/
 .venv/
 
-# IDEs
-.vscode/
-.idea/
-*.swp
-*.swo
-*.swn
-.DS_Store
-*.sublime-project
-*.sublime-workspace
-
-# Environment files
+# Environment files (use runtime env)
 .env
 .env.local
 .env.*.local
 .env.production
 .env.development
+!.env.example
+
+# IDE and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*.swn
+*~
+*.sublime-project
+*.sublime-workspace
+
+# OS files
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
 # Testing
 .pytest_cache/
@@ -55,65 +80,54 @@ htmlcov/
 .hypothesis/
 coverage.xml
 *.cover
+.nyc_output/
 
-# Logs
-logs/
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Database
+# Database files
 *.db
 *.sqlite
 *.sqlite3
 db.sqlite3
 
-# Docker
-.dockerignore
+# Docker files (prevent recursion)
 docker-compose*.yml
 Dockerfile*
-
-# Git
-.git/
-.gitignore
-.gitattributes
+.docker/
 
 # Documentation
 docs/
 *.md
-LICENSE
+!README.md
+LICENSE*
+CHANGELOG*
 
-# Uploads & Sessions (will be mounted as volumes)
+# Uploads & Sessions (mounted as volumes)
 uploads/
 sessions/
 temp/
 tmp/
 
-# Node.js (for frontend)
+# Node.js (frontend)
 node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
 .next/
 out/
 .cache/
-
-# macOS
-.DS_Store
-.AppleDouble
-.LSOverride
-
-# Windows
-Thumbs.db
-ehthumbs.db
-Desktop.ini
 
 # CI/CD
 .github/
 .gitlab-ci.yml
 .travis.yml
 azure-pipelines.yml
+
+# Secrets (never include)
+secrets/
+*.pem
+*.key
+*.crt
+
+# Data directories
+data/
+backups/
+*.sql
 
 # Misc
 *.bak

@@ -1,4 +1,12 @@
+# ===========================================
+# Industry-Standard Docker Compose Configuration
+# Production-ready with security hardening
+# ===========================================
+
 services:
+  # =========================================
+  # PostgreSQL Database
+  # =========================================
   postgres:
     image: postgres:16-alpine
     container_name: tiktok-postgres
@@ -9,39 +17,94 @@ services:
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    # Security: Only expose internally, not to host
+    expose:
+      - "5432"
+    # Optional: Expose to host for development
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tiktok}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tiktok} -d ${POSTGRES_DB:-tiktok_db}"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
     networks:
-      - tiktok-network
+      - database-network
     restart: unless-stopped
+    # Security: Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    # Security: Drop all capabilities, add only required
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
 
+  # =========================================
+  # Redis Cache & Message Broker
+  # =========================================
   redis:
     image: redis:7-alpine
     container_name: tiktok-redis
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis_password}
+    command: >
+      redis-server
+      --appendonly yes
+      --requirepass ${REDIS_PASSWORD:-redis_password}
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
     volumes:
       - redis_data:/data
+    expose:
+      - "6379"
     ports:
       - "${REDIS_PORT:-6379}:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis_password}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
-      - tiktok-network
+      - cache-network
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 768M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
 
+  # =========================================
+  # FastAPI Backend
+  # =========================================
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
       target: production
+      args:
+        USER_UID: 10001
+        USER_GID: 10001
     container_name: tiktok-backend
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-tiktok}:${POSTGRES_PASSWORD:-tiktok_password}@postgres:5432/${POSTGRES_DB:-tiktok_db}
@@ -55,10 +118,11 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - MAX_UPLOAD_SIZE=${MAX_UPLOAD_SIZE:-104857600}
       - TIKTOK_SESSION_STORAGE=/app/sessions
+      - GUNICORN_WORKERS=${GUNICORN_WORKERS:-4}
     volumes:
       - uploads:/app/uploads
       - sessions:/app/sessions
-      - ./backend/logs:/app/logs
+      - logs:/app/logs
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     depends_on:
@@ -67,22 +131,51 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)\""]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 60s
     networks:
-      - tiktok-network
+      - frontend-network
+      - backend-network
+      - database-network
+      - cache-network
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    # Shared memory for Playwright browsers
+    shm_size: '2gb'
 
+  # =========================================
+  # Celery Worker
+  # =========================================
   worker:
     build:
       context: ./backend
       dockerfile: Dockerfile
       target: production
+      args:
+        USER_UID: 10002
+        USER_GID: 10002
     container_name: tiktok-worker
-    command: celery -A app.worker.celery_app worker --loglevel=${LOG_LEVEL:-info} --concurrency=${WORKER_CONCURRENCY:-4}
+    command: >
+      celery -A app.worker.celery_app worker
+      --loglevel=${LOG_LEVEL:-info}
+      --concurrency=${WORKER_CONCURRENCY:-4}
+      --max-tasks-per-child=100
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-tiktok}:${POSTGRES_PASSWORD:-tiktok_password}@postgres:5432/${POSTGRES_DB:-tiktok_db}
       - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_password}@redis:6379/0
@@ -96,7 +189,7 @@ services:
     volumes:
       - uploads:/app/uploads
       - sessions:/app/sessions
-      - ./backend/logs:/app/logs
+      - logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -105,20 +198,41 @@ services:
       backend:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "celery -A app.worker.celery_app inspect ping -d celery@$$HOSTNAME"]
+      test: ["CMD-SHELL", "celery -A app.worker.celery_app inspect ping -d celery@$$HOSTNAME || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
     networks:
-      - tiktok-network
+      - backend-network
+      - database-network
+      - cache-network
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '6.0'
+          memory: 8G
+        reservations:
+          cpus: '2.0'
+          memory: 2G
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    shm_size: '2gb'
 
+  # =========================================
+  # Celery Beat Scheduler
+  # =========================================
   beat:
     build:
       context: ./backend
       dockerfile: Dockerfile
       target: production
+      args:
+        USER_UID: 10003
+        USER_GID: 10003
     container_name: tiktok-beat
     command: celery -A app.worker.celery_app beat --loglevel=${LOG_LEVEL:-info}
     environment:
@@ -130,16 +244,32 @@ services:
       - ENVIRONMENT=${ENVIRONMENT:-production}
       - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:
-      - ./backend/logs:/app/logs
+      - logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
     networks:
-      - tiktok-network
+      - backend-network
+      - cache-network
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
 
+  # =========================================
+  # Next.js Frontend (Bun-powered)
+  # =========================================
   frontend:
     build:
       context: ./frontend
@@ -153,17 +283,35 @@ services:
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      test: ["CMD-SHELL", "bun -e \"fetch('http://localhost:3000/').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))\""]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
     networks:
-      - tiktok-network
+      - frontend-network
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
 
+# =========================================
+# Named Volumes
+# =========================================
 volumes:
   postgres_data:
     driver: local
@@ -173,7 +321,25 @@ volumes:
     driver: local
   sessions:
     driver: local
+  logs:
+    driver: local
 
+# =========================================
+# Network Segmentation
+# =========================================
 networks:
-  tiktok-network:
+  # Frontend network - accessible from outside
+  frontend-network:
     driver: bridge
+  # Backend network - internal only
+  backend-network:
+    driver: bridge
+    internal: true
+  # Database network - internal only
+  database-network:
+    driver: bridge
+    internal: true
+  # Cache network - internal only
+  cache-network:
+    driver: bridge
+    internal: true

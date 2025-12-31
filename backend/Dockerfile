@@ -1,25 +1,34 @@
-# Multi-stage Dockerfile for Python FastAPI backend with Playwright and FFmpeg
-# Using Ubuntu for better Playwright compatibility
+# ============================================
+# Industry-Standard Python FastAPI Dockerfile
+# Multi-stage build with security hardening
+# Includes Playwright + FFmpeg for video processing
+# ============================================
+
+# Build argument for user configuration
+ARG USER_UID=10001
+ARG USER_GID=10001
 
 # Stage 1: Base image with system dependencies
-FROM python:3.11-bookworm AS base
+FROM python:3.11-slim-bookworm AS base
+
+# Security: Set build arguments
+ARG USER_UID
+ARG USER_GID
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONFAULTHANDLER=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_DEFAULT_TIMEOUT=100 \
     DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies including FFmpeg and Playwright requirements
+# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Build tools
-    gcc \
-    g++ \
-    make \
     # FFmpeg for video processing
     ffmpeg \
-    # Playwright browser dependencies (Debian Bookworm packages)
+    # Playwright browser dependencies (Debian Bookworm)
     libnss3 \
     libnspr4 \
     libatk1.0-0 \
@@ -38,35 +47,54 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libasound2 \
     libatspi2.0-0 \
     libxshmfence1 \
-    # Additional utilities
+    # Essential utilities
     curl \
-    wget \
-    # Fonts
+    ca-certificates \
+    # Fonts for proper rendering
     fonts-liberation \
     fonts-noto-color-emoji \
-    fonts-unifont \
     # libmagic for python-magic
     libmagic1 \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 # Create app directory
 WORKDIR /app
 
-# Stage 2: Dependencies installation
-FROM base AS dependencies
+# Stage 2: Builder - compile dependencies
+FROM base AS builder
+
+# Install build tools (only in builder stage)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    make \
+    libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
 COPY requirements.txt .
 
 # Install Python dependencies
 RUN pip install --upgrade pip setuptools wheel && \
-    pip install -r requirements.txt
-
-# Install Playwright browsers (skip system deps - we installed them above)
-RUN playwright install chromium --with-deps || playwright install chromium
+    pip wheel --no-cache-dir --wheel-dir=/wheels -r requirements.txt
 
 # Stage 3: Development image
-FROM dependencies AS development
+FROM base AS development
+
+ARG USER_UID
+ARG USER_GID
+
+# Copy wheels from builder
+COPY --from=builder /wheels /wheels
+COPY requirements.txt .
+
+# Install from wheels (faster, no compilation needed)
+RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt && \
+    rm -rf /wheels
+
+# Install Playwright browsers
+RUN playwright install chromium --with-deps
 
 # Copy application code
 COPY . .
@@ -82,38 +110,59 @@ EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
 # Stage 4: Production image
-FROM dependencies AS production
+FROM base AS production
+
+ARG USER_UID
+ARG USER_GID
+
+# Copy wheels from builder
+COPY --from=builder /wheels /wheels
+COPY requirements.txt .
+
+# Install from wheels (faster, no compilation needed)
+RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt && \
+    rm -rf /wheels
+
+# Security: Create non-root user BEFORE installing playwright
+RUN groupadd --gid ${USER_GID} appuser && \
+    useradd --uid ${USER_UID} --gid ${USER_GID} -m -s /bin/bash appuser && \
+    # Create app directories with proper permissions
+    mkdir -p /app/uploads /app/sessions /app/logs && \
+    chown -R appuser:appuser /app && \
+    # Create playwright cache directory for non-root user
+    mkdir -p /home/appuser/.cache && \
+    chown -R appuser:appuser /home/appuser
+
+# Security: Switch to non-root user for browser installation
+USER appuser
+
+# Install Playwright browsers as non-root user
+RUN playwright install chromium
 
 # Copy application code
-COPY . .
+COPY --chown=appuser:appuser . .
 
-# Create necessary directories with proper permissions
-RUN mkdir -p /app/uploads /app/sessions /app/logs && \
-    chmod -R 755 /app/uploads /app/sessions /app/logs && \
-    # Create non-root user for security
-    useradd -m -u 1000 appuser && \
-    chown -R appuser:appuser /app && \
-    # Copy playwright browsers to user directory
-    mkdir -p /home/appuser/.cache && \
-    cp -r /root/.cache/ms-playwright /home/appuser/.cache/ 2>/dev/null || true && \
-    chown -R appuser:appuser /home/appuser/.cache
-
-# Switch to non-root user
-USER appuser
+# Set restrictive permissions
+RUN chmod -R 750 /app && \
+    chmod -R 770 /app/uploads /app/sessions /app/logs
 
 # Expose port
 EXPOSE 8000
 
-# Health check
+# Health check using Python (no curl needed in production)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)" || exit 1
 
 # Run application with Gunicorn and Uvicorn workers
-CMD ["gunicorn", "app.main:app", \
-     "--workers", "4", \
-     "--worker-class", "uvicorn.workers.UvicornWorker", \
-     "--bind", "0.0.0.0:8000", \
-     "--timeout", "120", \
-     "--access-logfile", "-", \
-     "--error-logfile", "-", \
-     "--log-level", "info"]
+# Workers configurable via environment variable
+CMD ["sh", "-c", "gunicorn app.main:app \
+    --workers ${GUNICORN_WORKERS:-4} \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --bind 0.0.0.0:8000 \
+    --timeout 120 \
+    --graceful-timeout 30 \
+    --keep-alive 5 \
+    --access-logfile - \
+    --error-logfile - \
+    --log-level ${LOG_LEVEL:-info} \
+    --capture-output"]

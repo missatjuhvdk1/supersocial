@@ -1,0 +1,27 @@
+# ============================================
+# Development Dockerfile for Bun + Next.js
+# Hot-reload enabled
+# ============================================
+
+FROM oven/bun:1.1.38
+
+WORKDIR /app
+
+# Copy package files
+COPY package.json bun.lock ./
+
+# Install ALL dependencies (including dev)
+RUN bun install --frozen-lockfile
+
+# Copy application source
+COPY . .
+
+# Set development environment
+ENV NODE_ENV=development
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Expose port
+EXPOSE 3000
+
+# Run development server with hot-reload
+CMD ["bun", "run", "dev"]

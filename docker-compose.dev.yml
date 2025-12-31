@@ -1,0 +1,128 @@
+# ===========================================
+# Development Docker Compose Configuration
+# Hot-reload enabled, debug mode
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+# ===========================================
+
+services:
+  # =========================================
+  # PostgreSQL - Development overrides
+  # =========================================
+  postgres:
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    # Development: Allow connections from host
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+
+  # =========================================
+  # Redis - Development overrides
+  # =========================================
+  redis:
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+
+  # =========================================
+  # FastAPI Backend - Development mode
+  # =========================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    environment:
+      - ENVIRONMENT=development
+      - LOG_LEVEL=debug
+      - DEBUG=true
+    volumes:
+      # Hot-reload: Mount source code
+      - ./backend:/app
+      - uploads:/app/uploads
+      - sessions:/app/sessions
+      - logs:/app/logs
+    # No resource limits in development
+    deploy:
+      resources: {}
+
+  # =========================================
+  # Celery Worker - Development mode
+  # =========================================
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    command: >
+      celery -A app.worker.celery_app worker
+      --loglevel=debug
+      --concurrency=2
+      --max-tasks-per-child=50
+    environment:
+      - ENVIRONMENT=development
+      - LOG_LEVEL=debug
+    volumes:
+      - ./backend:/app
+      - uploads:/app/uploads
+      - sessions:/app/sessions
+      - logs:/app/logs
+    deploy:
+      resources: {}
+
+  # =========================================
+  # Celery Beat - Development mode
+  # =========================================
+  beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    command: celery -A app.worker.celery_app beat --loglevel=debug
+    environment:
+      - ENVIRONMENT=development
+      - LOG_LEVEL=debug
+    volumes:
+      - ./backend:/app
+      - logs:/app/logs
+    deploy:
+      resources: {}
+
+  # =========================================
+  # Next.js Frontend - Development mode
+  # =========================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    volumes:
+      # Hot-reload: Mount source code
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    command: bun run dev
+    deploy:
+      resources: {}
+
+  # =========================================
+  # Flower - Celery monitoring UI
+  # =========================================
+  flower:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    container_name: tiktok-flower
+    command: celery -A app.worker.celery_app flower --port=5555
+    environment:
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-redis_password}@redis:6379/0
+    ports:
+      - "5555:5555"
+    depends_on:
+      - redis
+      - worker
+    networks:
+      - backend-network
+      - cache-network
+    restart: unless-stopped

@@ -1,71 +1,83 @@
-# Multi-stage Dockerfile for Next.js frontend
+# ============================================
+# Industry-Standard Bun + Next.js Dockerfile
+# Multi-stage build optimized for production
+# ============================================
 
-# Stage 1: Dependencies installation
-FROM node:20-alpine AS dependencies
-
-# Set working directory
+# Stage 1: Dependencies installation (cached layer)
+FROM oven/bun:1.1.38 AS deps
 WORKDIR /app
 
-# Install libc6-compat for Alpine compatibility
-RUN apk add --no-cache libc6-compat
+# Install libc6-compat for Alpine compatibility (if needed)
+# Bun image is Debian-based, so we're good
 
-# Copy package files
-COPY package.json ./
+# Copy package files for dependency caching
+COPY package.json bun.lock ./
 
-# Install dependencies (use npm install since no lock file)
-RUN npm install && npm cache clean --force
+# Install ALL dependencies (dev + prod) with frozen lockfile
+# This ensures reproducible builds
+RUN bun install --frozen-lockfile
 
-# Stage 2: Build stage
-FROM node:20-alpine AS builder
-
+# Stage 2: Production dependencies only
+FROM oven/bun:1.1.38 AS prod-deps
 WORKDIR /app
 
-# Copy dependencies from previous stage
-COPY --from=dependencies /app/node_modules ./node_modules
+COPY package.json bun.lock ./
 
-# Copy all source files
+# Install only production dependencies
+RUN bun install --frozen-lockfile --production
+
+# Stage 3: Builder - Build the application
+FROM oven/bun:1.1.38 AS builder
+WORKDIR /app
+
+# Copy dependencies from deps stage
+COPY --from=deps /app/node_modules ./node_modules
+
+# Copy application source
 COPY . .
 
-# Set build-time environment variables
+# Build-time environment variables
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
 
-# Build Next.js application
-RUN npm run build
+# Build Next.js application with standalone output
+RUN bun run build
 
-# Stage 3: Production runner
-FROM node:20-alpine AS runner
-
+# Stage 4: Production runner - minimal image
+FROM oven/bun:1.1.38-slim AS runner
 WORKDIR /app
 
 # Set production environment
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
 
-# Create non-root user
-RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 nextjs
+# Security: Create non-root user
+RUN groupadd --gid 1001 nodejs && \
+    useradd --uid 1001 --gid nodejs --shell /bin/bash --create-home nextjs
 
-# Copy necessary files from builder
+# Copy public assets
 COPY --from=builder /app/public ./public
+
+# Create .next directory with proper ownership
+RUN mkdir .next && chown nextjs:nodejs .next
+
+# Copy standalone output (only necessary files)
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# Switch to non-root user
+# Security: Switch to non-root user
 USER nextjs
 
-# Expose port
+# Expose application port
 EXPOSE 3000
 
-# Set hostname
-ENV HOSTNAME="0.0.0.0"
-ENV PORT=3000
-
-# Health check
+# Health check - uses wget since it's lighter than curl
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:3000/ || exit 1
+    CMD bun -e "fetch('http://localhost:3000/').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"
 
-# Start Next.js server
-CMD ["node", "server.js"]
+# Start the application with Bun
+CMD ["bun", "server.js"]

@@ -1,162 +1,258 @@
-# TikTok Auto-Poster - Docker Management Makefile
+# ===========================================
+# Industry-Standard Makefile for Docker
+# TikTok Auto-Poster Application
+# ===========================================
 
-.PHONY: help build up down restart logs ps clean build-backend build-frontend build-worker migrate shell-backend shell-frontend shell-db test
+.PHONY: help build up down restart logs shell test clean prune
 
 # Default target
-help:
-	@echo "TikTok Auto-Poster - Docker Commands"
-	@echo "===================================="
-	@echo "build              - Build all Docker images"
-	@echo "build-backend      - Build backend image only"
-	@echo "build-frontend     - Build frontend image only"
-	@echo "up                 - Start all services"
-	@echo "down               - Stop all services"
-	@echo "restart            - Restart all services"
-	@echo "logs               - View logs from all services"
-	@echo "logs-backend       - View backend logs"
-	@echo "logs-frontend      - View frontend logs"
-	@echo "logs-worker        - View worker logs"
-	@echo "ps                 - List running containers"
-	@echo "clean              - Stop and remove containers, volumes"
-	@echo "migrate            - Run database migrations"
-	@echo "shell-backend      - Open shell in backend container"
-	@echo "shell-frontend     - Open shell in frontend container"
-	@echo "shell-db           - Open psql in database"
-	@echo "shell-redis        - Open redis-cli"
-	@echo "test               - Run backend tests"
-	@echo "dev                - Start in development mode"
-	@echo "prod               - Start in production mode"
+.DEFAULT_GOAL := help
 
-# Build all images
-build:
-	docker-compose build
+# Colors for terminal output
+BLUE := \033[34m
+GREEN := \033[32m
+YELLOW := \033[33m
+RED := \033[31m
+NC := \033[0m
 
-# Build specific services
-build-backend:
-	docker-compose build backend worker beat
+# ===========================================
+# Help
+# ===========================================
+help: ## Show this help message
+	@echo ""
+	@echo "$(BLUE)TikTok Auto-Poster - Docker Commands$(NC)"
+	@echo "======================================"
+	@echo ""
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "$(GREEN)%-20s$(NC) %s\n", $$1, $$2}'
+	@echo ""
 
-build-frontend:
-	docker-compose build frontend
+# ===========================================
+# Build Commands
+# ===========================================
+build: ## Build all Docker images
+	@echo "$(BLUE)Building Docker images...$(NC)"
+	docker compose build
 
-# Start services
-up:
-	docker-compose up -d
+build-no-cache: ## Build all Docker images without cache
+	@echo "$(BLUE)Building Docker images (no cache)...$(NC)"
+	docker compose build --no-cache
 
-# Start with logs
-up-logs:
-	docker-compose up
+build-frontend: ## Build only frontend image
+	@echo "$(BLUE)Building frontend image...$(NC)"
+	docker compose build frontend
 
-# Development mode
-dev:
-	docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+build-backend: ## Build only backend image
+	@echo "$(BLUE)Building backend image...$(NC)"
+	docker compose build backend
 
-# Production mode
-prod:
-	docker-compose up -d
+# ===========================================
+# Run Commands
+# ===========================================
+up: ## Start all services in production mode
+	@echo "$(GREEN)Starting production services...$(NC)"
+	docker compose up -d
 
-# Stop services
-down:
-	docker-compose down
+up-build: ## Build and start all services
+	@echo "$(GREEN)Building and starting services...$(NC)"
+	docker compose up -d --build
 
-# Restart services
-restart:
-	docker-compose restart
+dev: ## Start all services in development mode
+	@echo "$(YELLOW)Starting development services...$(NC)"
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 
-# View logs
-logs:
-	docker-compose logs -f
+dev-build: ## Build and start all services in development mode
+	@echo "$(YELLOW)Building and starting development services...$(NC)"
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 
-logs-backend:
-	docker-compose logs -f backend
+down: ## Stop all services
+	@echo "$(RED)Stopping services...$(NC)"
+	docker compose down
 
-logs-frontend:
-	docker-compose logs -f frontend
+down-v: ## Stop all services and remove volumes
+	@echo "$(RED)Stopping services and removing volumes...$(NC)"
+	docker compose down -v
 
-logs-worker:
-	docker-compose logs -f worker
+restart: down up ## Restart all services
 
-logs-beat:
-	docker-compose logs -f beat
+# ===========================================
+# Logs Commands
+# ===========================================
+logs: ## View logs from all services
+	docker compose logs -f
 
-# List containers
-ps:
-	docker-compose ps
+logs-backend: ## View backend logs
+	docker compose logs -f backend
 
-# Clean up everything
-clean:
-	docker-compose down -v --remove-orphans
-	docker system prune -f
+logs-worker: ## View worker logs
+	docker compose logs -f worker
 
-# Deep clean (including images)
-clean-all:
-	docker-compose down -v --rmi all --remove-orphans
-	docker system prune -af
+logs-frontend: ## View frontend logs
+	docker compose logs -f frontend
 
-# Database migrations
-migrate:
-	docker-compose exec backend alembic upgrade head
+logs-postgres: ## View PostgreSQL logs
+	docker compose logs -f postgres
 
-migrate-create:
-	@read -p "Enter migration message: " msg; \
-	docker-compose exec backend alembic revision --autogenerate -m "$$msg"
+logs-redis: ## View Redis logs
+	docker compose logs -f redis
 
-migrate-downgrade:
-	docker-compose exec backend alembic downgrade -1
+# ===========================================
+# Shell Access
+# ===========================================
+shell-backend: ## Open shell in backend container
+	docker compose exec backend /bin/bash
 
-# Shell access
-shell-backend:
-	docker-compose exec backend /bin/bash
+shell-worker: ## Open shell in worker container
+	docker compose exec worker /bin/bash
 
-shell-frontend:
-	docker-compose exec frontend /bin/sh
+shell-frontend: ## Open shell in frontend container
+	docker compose exec frontend /bin/sh
 
-shell-db:
-	docker-compose exec postgres psql -U tiktok -d tiktok_db
+shell-db: ## Open PostgreSQL shell
+	docker compose exec postgres psql -U $${POSTGRES_USER:-tiktok} -d $${POSTGRES_DB:-tiktok_db}
 
-shell-redis:
-	docker-compose exec redis redis-cli -a redis_password
+shell-redis: ## Open Redis CLI
+	docker compose exec redis redis-cli -a $${REDIS_PASSWORD:-redis_password}
 
-# Testing
-test:
-	docker-compose exec backend pytest
+# ===========================================
+# Database Commands
+# ===========================================
+migrate: ## Run database migrations
+	@echo "$(BLUE)Running migrations...$(NC)"
+	docker compose exec backend alembic upgrade head
 
-test-cov:
-	docker-compose exec backend pytest --cov=app --cov-report=html
+migrate-down: ## Rollback last migration
+	@echo "$(YELLOW)Rolling back migration...$(NC)"
+	docker compose exec backend alembic downgrade -1
 
-# Health checks
-health:
-	@echo "Backend Health:"
-	@curl -f http://localhost:8000/health || echo "Backend not healthy"
-	@echo "\nFrontend Health:"
-	@curl -f http://localhost:3000/api/health || echo "Frontend not healthy"
+migrate-create: ## Create new migration (usage: make migrate-create MSG="description")
+	@echo "$(BLUE)Creating migration...$(NC)"
+	docker compose exec backend alembic revision --autogenerate -m "$(MSG)"
 
-# Monitor Celery workers
-celery-status:
-	docker-compose exec worker celery -A app.celery inspect active
+db-backup: ## Backup database
+	@echo "$(BLUE)Backing up database...$(NC)"
+	docker compose exec postgres pg_dump -U $${POSTGRES_USER:-tiktok} $${POSTGRES_DB:-tiktok_db} > backup_$$(date +%Y%m%d_%H%M%S).sql
 
-celery-stats:
-	docker-compose exec worker celery -A app.celery inspect stats
+db-restore: ## Restore database (usage: make db-restore FILE=backup.sql)
+	@echo "$(YELLOW)Restoring database from $(FILE)...$(NC)"
+	docker compose exec -T postgres psql -U $${POSTGRES_USER:-tiktok} -d $${POSTGRES_DB:-tiktok_db} < $(FILE)
 
-# Database backup
-db-backup:
-	docker-compose exec postgres pg_dump -U tiktok tiktok_db > backup_$(shell date +%Y%m%d_%H%M%S).sql
+# ===========================================
+# Testing Commands
+# ===========================================
+test: ## Run tests
+	@echo "$(BLUE)Running tests...$(NC)"
+	docker compose exec backend pytest
 
-# Database restore
-db-restore:
-	@read -p "Enter backup file path: " file; \
-	docker-compose exec -T postgres psql -U tiktok -d tiktok_db < $$file
+test-cov: ## Run tests with coverage
+	@echo "$(BLUE)Running tests with coverage...$(NC)"
+	docker compose exec backend pytest --cov=app --cov-report=html
 
-# View environment variables
-env:
-	docker-compose config
+lint: ## Run linters
+	@echo "$(BLUE)Running linters...$(NC)"
+	docker compose exec backend flake8 app
+	docker compose exec frontend bun run lint
 
-# Pull latest images
-pull:
-	docker-compose pull
+# ===========================================
+# Health & Status Commands
+# ===========================================
+health: ## Check health of all services
+	@echo "$(BLUE)Checking service health...$(NC)"
+	@docker compose ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
 
-# Rebuild and restart specific service
-rebuild-backend:
-	docker-compose up -d --no-deps --build backend worker beat
+ps: ## Show running containers
+	docker compose ps
 
-rebuild-frontend:
-	docker-compose up -d --no-deps --build frontend
+status: ## Show detailed status of all containers
+	docker compose ps -a
+
+stats: ## Show resource usage of all containers
+	docker stats --no-stream
+
+# ===========================================
+# Celery Commands
+# ===========================================
+celery-status: ## Check Celery worker status
+	docker compose exec worker celery -A app.worker.celery_app inspect active
+
+celery-stats: ## Check Celery worker statistics
+	docker compose exec worker celery -A app.worker.celery_app inspect stats
+
+celery-purge: ## Purge all Celery tasks
+	@echo "$(RED)Purging all Celery tasks...$(NC)"
+	docker compose exec worker celery -A app.worker.celery_app purge -f
+
+# ===========================================
+# Cleanup Commands
+# ===========================================
+clean: ## Remove stopped containers and unused images
+	@echo "$(YELLOW)Cleaning up...$(NC)"
+	docker compose down --remove-orphans
+	docker image prune -f
+
+clean-all: ## Remove all containers, volumes, and images
+	@echo "$(RED)Cleaning everything...$(NC)"
+	docker compose down -v --rmi all --remove-orphans
+
+prune: ## Remove all unused Docker resources (DANGEROUS)
+	@echo "$(RED)WARNING: This will remove all unused Docker resources!$(NC)"
+	@read -p "Are you sure? [y/N] " confirm && [ "$$confirm" = "y" ]
+	docker system prune -af --volumes
+
+# ===========================================
+# Setup Commands
+# ===========================================
+setup: ## Initial setup - copy env files and generate secrets
+	@echo "$(BLUE)Setting up environment...$(NC)"
+	@if [ ! -f .env ]; then \
+		cp .env.example .env; \
+		echo "$(GREEN)Created .env from .env.example$(NC)"; \
+		echo "$(YELLOW)Please update .env with your settings$(NC)"; \
+	else \
+		echo "$(YELLOW).env already exists$(NC)"; \
+	fi
+	@echo "$(GREEN)Generating SECRET_KEY...$(NC)"
+	@NEW_SECRET=$$(openssl rand -hex 32) && \
+	if grep -q "SECRET_KEY=$$" .env 2>/dev/null || grep -q "SECRET_KEY=your_secret" .env 2>/dev/null; then \
+		sed -i "s/SECRET_KEY=.*/SECRET_KEY=$$NEW_SECRET/" .env; \
+		echo "$(GREEN)SECRET_KEY generated and updated$(NC)"; \
+	fi
+
+init: setup build up migrate ## Full initialization: setup, build, start, and migrate
+	@echo "$(GREEN)Initialization complete!$(NC)"
+	@echo "$(BLUE)Frontend: http://localhost:3000$(NC)"
+	@echo "$(BLUE)Backend API: http://localhost:8000$(NC)"
+	@echo "$(BLUE)API Docs: http://localhost:8000/docs$(NC)"
+
+# ===========================================
+# Production Commands
+# ===========================================
+prod-deploy: ## Deploy to production
+	@echo "$(GREEN)Deploying to production...$(NC)"
+	docker compose pull
+	docker compose up -d --build
+	docker compose exec backend alembic upgrade head
+	@echo "$(GREEN)Deployment complete!$(NC)"
+
+prod-rollback: ## Rollback to previous deployment
+	@echo "$(YELLOW)Rolling back...$(NC)"
+	docker compose exec backend alembic downgrade -1
+	docker compose down
+	docker compose up -d
+
+# ===========================================
+# Pull & Update Commands
+# ===========================================
+pull: ## Pull latest images
+	docker compose pull
+
+rebuild-backend: ## Rebuild and restart backend services
+	docker compose up -d --no-deps --build backend worker beat
+
+rebuild-frontend: ## Rebuild and restart frontend
+	docker compose up -d --no-deps --build frontend
+
+# ===========================================
+# Environment Info
+# ===========================================
+env: ## Show resolved docker-compose config
+	docker compose config
