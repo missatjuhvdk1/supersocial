@@ -696,6 +696,9 @@ async def _warmup_account_task_async(task_self, account_id: int) -> Dict[str, An
             if not account:
                 raise ValueError(f"Account {account_id} not found")
 
+            if not account.password:
+                raise ValueError(f"Account {account_id} has no password for login")
+
             # Get assigned proxy if any
             proxy = None
             if account.proxy_id:
@@ -719,10 +722,15 @@ async def _warmup_account_task_async(task_self, account_id: int) -> Dict[str, An
 
             # Update account based on login result
             if login_result.get("success"):
-                account.cookies = login_result.get("cookies")
+                # Extract cookies from login result
+                cookies = login_result.get("cookies", [])
+
+                # Store cookies in account (cookies field is JSON type)
+                account.cookies = cookies
                 account.status = AccountStatus.ACTIVE
                 account.last_used = datetime.utcnow()
-                logger.info(f"Account {account.email} warmed up successfully")
+
+                logger.info(f"Account {account.email} warmed up successfully with {len(cookies)} cookies")
 
                 await db.commit()
 
@@ -730,12 +738,20 @@ async def _warmup_account_task_async(task_self, account_id: int) -> Dict[str, An
                     "account_id": account_id,
                     "email": account.email,
                     "success": True,
-                    "status": account.status.value
+                    "status": account.status.value,
+                    "cookies_count": len(cookies)
                 }
             else:
+                # Login failed - determine the reason
                 error_message = login_result.get("error", "Unknown login error")
-                account.status = AccountStatus.INACTIVE
-                logger.error(f"Account {account.email} warmup failed: {error_message}")
+
+                # Check if error is captcha-related
+                if error_message and ("captcha" in error_message.lower() or "verify" in error_message.lower()):
+                    account.status = AccountStatus.NEEDS_CAPTCHA
+                    logger.warning(f"Account {account.email} needs captcha: {error_message}")
+                else:
+                    account.status = AccountStatus.INACTIVE
+                    logger.error(f"Account {account.email} warmup failed: {error_message}")
 
                 await db.commit()
 
@@ -750,7 +766,7 @@ async def _warmup_account_task_async(task_self, account_id: int) -> Dict[str, An
         except Exception as e:
             logger.exception(f"Error warming up account {account_id}: {str(e)}")
 
-            # Mark account as inactive
+            # Mark account as inactive on unexpected errors
             result = await db.execute(select(Account).where(Account.id == account_id))
             account = result.scalar_one_or_none()
 

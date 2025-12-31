@@ -101,3 +101,12 @@ export const jobsAPI = {
 export const statsAPI = {
   getDashboard: () => api.get('/stats/dashboard'),
 };
+
+export const authAPI = {
+  register: (data: { email: string; username: string; password: string }) =>
+    api.post('/auth/register', data),
+  login: (data: { email: string; password: string }) =>
+    api.post('/auth/login', data),
+  me: () => api.get('/auth/me'),
+  logout: () => api.post('/auth/logout'),
+};

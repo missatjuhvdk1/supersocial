@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from app.config import settings
 from app.database import init_db, close_db
 from app.api import (
+    auth_router,
     accounts_router,
     proxies_router,
     profiles_router,
@@ -53,6 +54,7 @@ async def health_check():
 
 
 # Mount API routers
+app.include_router(auth_router, prefix=settings.api_prefix)
 app.include_router(accounts_router, prefix=settings.api_prefix)
 app.include_router(proxies_router, prefix=settings.api_prefix)
 app.include_router(profiles_router, prefix=settings.api_prefix)

@@ -3,5 +3,6 @@ from app.models.proxy import Proxy
 from app.models.profile import BrowserProfile
 from app.models.campaign import Campaign
 from app.models.job import Job
+from app.models.user import User
 
-__all__ = ["Account", "Proxy", "BrowserProfile", "Campaign", "Job"]
+__all__ = ["Account", "Proxy", "BrowserProfile", "Campaign", "Job", "User"]
