@@ -37,11 +37,11 @@ class Settings(BaseSettings):
 
     # TikTok Settings
     tiktok_upload_timeout: int = 300  # seconds
-    tiktok_headless: bool = False  # Set to False to see browser for debugging
+    tiktok_headless: bool = True  # Must be True in Docker (no display), set False only for local debugging
     max_concurrent_uploads: int = 5
 
     # Browser Settings
-    headless_browser: bool = False  # Set to False to see browser for debugging
+    headless_browser: bool = True  # Must be True in Docker (no display), set False only for local debugging
     browser_timeout: int = 60
 
     # External APIs
